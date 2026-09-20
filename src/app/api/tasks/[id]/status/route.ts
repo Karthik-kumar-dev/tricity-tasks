@@ -25,11 +25,20 @@ export async function GET(
 
   const { data: existing } = await supabase
     .from("submissions")
-    .select("id")
+    .select("id, link, answer, college_name")
     .eq("team_id", teamId.trim())
     .eq("member_name_normalized", normalizedName)
     .eq("task_id", taskId)
     .maybeSingle();
 
-  return NextResponse.json({ submitted: !!existing });
+  if (!existing) {
+    return NextResponse.json({ submitted: false });
+  }
+
+  return NextResponse.json({
+    submitted: true,
+    link: existing.link || null,
+    answer: existing.answer || null,
+    college_name: existing.college_name || null,
+  });
 }

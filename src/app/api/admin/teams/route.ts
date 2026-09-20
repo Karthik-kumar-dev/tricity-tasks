@@ -13,9 +13,18 @@ export async function GET() {
   const supabase = getSupabase();
 
   // Get all submissions grouped by team_id
-  const { data: submissions, error } = await supabase
+  let { data: submissions, error } = await supabase
     .from("submissions")
-    .select("team_id, member_name, member_name_normalized, score");
+    .select("team_id, member_name, member_name_normalized, college_name, score");
+
+  // Fallback if college_name column does not exist yet in Supabase
+  if (error && (error.code === "42703" || error.message?.includes("college_name"))) {
+    const retry = await supabase
+      .from("submissions")
+      .select("team_id, member_name, member_name_normalized, score");
+    submissions = (retry.data || []).map((s) => ({ ...s, college_name: null }));
+    error = retry.error;
+  }
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -27,6 +36,7 @@ export async function GET() {
     {
       members: Set<string>;
       memberNames: Set<string>;
+      colleges: Set<string>;
       submissionCount: number;
       scoredTotal: number;
       scoredCount: number;
@@ -37,12 +47,14 @@ export async function GET() {
     const team = teamMap.get(sub.team_id) || {
       members: new Set<string>(),
       memberNames: new Set<string>(),
+      colleges: new Set<string>(),
       submissionCount: 0,
       scoredTotal: 0,
       scoredCount: 0,
     };
     team.members.add(sub.member_name_normalized);
     if (sub.member_name) team.memberNames.add(sub.member_name);
+    if (sub.college_name) team.colleges.add(sub.college_name);
     team.submissionCount++;
     if (sub.score !== null && sub.score !== undefined) {
       team.scoredTotal += sub.score;
@@ -61,6 +73,7 @@ export async function GET() {
         : null,
     total_score: data.scoredTotal,
     member_names: Array.from(data.memberNames),
+    colleges: Array.from(data.colleges),
   }));
 
   // Sort by total score descending, then team_id

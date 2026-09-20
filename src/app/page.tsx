@@ -14,6 +14,7 @@ interface StartFormData {
   taskId: number;
   team_id: string;
   member_name: string;
+  college_name: string;
 }
 
 interface LeaderboardTeam {
@@ -39,6 +40,7 @@ export default function HomePage() {
     taskId: 0,
     team_id: "",
     member_name: "",
+    college_name: "",
   });
   const [formError, setFormError] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -81,6 +83,22 @@ export default function HomePage() {
   }, []);
 
   useEffect(() => {
+    // Pre-fill from cookies on client after hydration
+    const cookies = document.cookie.split("; ").reduce((acc, c) => {
+      const [key, ...val] = c.split("=");
+      acc[key] = decodeURIComponent(val.join("="));
+      return acc;
+    }, {} as Record<string, string>);
+
+    if (cookies.team_id || cookies.member_name || cookies.college_name) {
+      setFormData((prev) => ({
+        ...prev,
+        team_id: cookies.team_id || "",
+        member_name: cookies.member_name || "",
+        college_name: cookies.college_name || "",
+      }));
+    }
+
     fetch("/api/tasks")
       .then((res) => res.json())
       .then((data) => setTasks(data.tasks || []))
@@ -92,21 +110,6 @@ export default function HomePage() {
       .then((data) => setLeaderboard(data.teams || []))
       .catch(() => console.error("Failed to fetch leaderboard"))
       .finally(() => setLeaderboardLoading(false));
-
-    // Pre-fill from cookies
-    const cookies = document.cookie.split("; ").reduce((acc, c) => {
-      const [key, ...val] = c.split("=");
-      acc[key] = decodeURIComponent(val.join("="));
-      return acc;
-    }, {} as Record<string, string>);
-
-    if (cookies.team_id || cookies.member_name) {
-      setFormData((prev) => ({
-        ...prev,
-        team_id: cookies.team_id || "",
-        member_name: cookies.member_name || "",
-      }));
-    }
   }, []);
 
   async function handleSearch(e: React.FormEvent) {
@@ -152,6 +155,14 @@ export default function HomePage() {
       setFormError('Team ID must start with "TRI" (e.g. TRI-01, TRI_WARRIORS)');
       return;
     }
+    if (!formData.member_name.trim()) {
+      setFormError("Please enter your full name");
+      return;
+    }
+    if (!formData.college_name.trim()) {
+      setFormError("Please enter your college name");
+      return;
+    }
 
     setSubmitting(true);
 
@@ -162,6 +173,7 @@ export default function HomePage() {
         body: JSON.stringify({
           team_id: normalizedTeam,
           member_name: formData.member_name.trim(),
+          college_name: formData.college_name.trim(),
         }),
       });
 
@@ -538,7 +550,7 @@ export default function HomePage() {
 
           {/* Subtitle */}
           <p className="text-base sm:text-xl text-slate-600 max-w-2xl mx-auto mb-10 leading-relaxed font-display">
-            24 hours of innovation across Telangana's historic tri-cities. Centle India Hyderabad brings together student creators, developers, and industry mentors across{" "}
+            24 hours of innovation across Telangana&apos;s historic tri-cities. Centle India Hyderabad brings together student creators, developers, and industry mentors across{" "}
             <span className="font-semibold text-slate-900">Warangal</span>,{" "}
             <span className="font-semibold text-slate-900">Hanamkonda</span>, and{" "}
             <span className="font-semibold text-slate-900">Kazipet</span>.
@@ -1392,7 +1404,7 @@ export default function HomePage() {
               Start Challenge Submission
             </h3>
             <p className="text-xs text-slate-600 mb-6 font-display leading-relaxed">
-              Enter your Team ID and Member Name. Cookies will save your credentials so you won&apos;t need to re-enter them for other tasks.
+              Enter your Team ID, Member Name, and College Name. Cookies will save your credentials so you won&apos;t need to re-enter them for other tasks.
             </p>
 
             <form onSubmit={handleStart} className="space-y-4">
@@ -1426,6 +1438,22 @@ export default function HomePage() {
                   value={formData.member_name}
                   onChange={(e) =>
                     setFormData((prev) => ({ ...prev, member_name: e.target.value }))
+                  }
+                  className="input-field text-xs"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-mono font-semibold uppercase text-slate-700 mb-1.5">
+                  College / Institution Name <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. NIT Warangal, KITS, SR University"
+                  value={formData.college_name}
+                  onChange={(e) =>
+                    setFormData((prev) => ({ ...prev, college_name: e.target.value }))
                   }
                   className="input-field text-xs"
                 />

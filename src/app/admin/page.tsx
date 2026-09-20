@@ -6,7 +6,10 @@ import Link from "next/link";
 interface Task {
   id: number;
   title: string;
+  description?: string;
   is_active: boolean;
+  rules?: string | null;
+  linkedin_template?: string | null;
 }
 
 interface Team {
@@ -16,11 +19,13 @@ interface Team {
   avg_score: number | null;
   total_score: number;
   member_names?: string[];
+  colleges?: string[];
 }
 
 interface Submission {
   id: number;
   member_name: string;
+  college_name?: string | null;
   task_id: number;
   task_title: string;
   answer: string;
@@ -43,6 +48,16 @@ export default function AdminPage() {
   const [loadingTeam, setLoadingTeam] = useState(false);
   const [togglingTask, setTogglingTask] = useState<number | null>(null);
   const [activeTab, setActiveTab] = useState<"tasks" | "teams">("tasks");
+
+  // Task editing state (rules, template, description)
+  const [editingTaskId, setEditingTaskId] = useState<number | null>(null);
+  const [taskEditTitle, setTaskEditTitle] = useState("");
+  const [taskEditDesc, setTaskEditDesc] = useState("");
+  const [taskEditRules, setTaskEditRules] = useState("");
+  const [taskEditTemplate, setTaskEditTemplate] = useState("");
+  const [savingTask, setSavingTask] = useState(false);
+  const [taskSaveSuccess, setTaskSaveSuccess] = useState(false);
+  const [taskSaveError, setTaskSaveError] = useState("");
 
   // Score editing state
   const [editingScore, setEditingScore] = useState<number | null>(null);
@@ -152,6 +167,60 @@ export default function AdminPage() {
       console.error("Toggle failed");
     } finally {
       setTogglingTask(null);
+    }
+  }
+
+  function startEditingTask(task: Task) {
+    setEditingTaskId(task.id);
+    setTaskEditTitle(task.title || "");
+    setTaskEditDesc(task.description || "");
+    setTaskEditRules(task.rules || "");
+    setTaskEditTemplate(task.linkedin_template || "");
+    setTaskSaveSuccess(false);
+    setTaskSaveError("");
+  }
+
+  function cancelEditingTask() {
+    setEditingTaskId(null);
+    setTaskSaveSuccess(false);
+    setTaskSaveError("");
+  }
+
+  async function handleSaveTask(taskId: number) {
+    setSavingTask(true);
+    setTaskSaveError("");
+    setTaskSaveSuccess(false);
+
+    try {
+      const res = await fetch(`/api/admin/tasks/${taskId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: taskEditTitle,
+          description: taskEditDesc,
+          rules: taskEditRules,
+          linkedin_template: taskEditTemplate,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        setTaskSaveError(data.error || "Failed to save task configuration");
+        return;
+      }
+
+      setTasks((prev) =>
+        prev.map((t) => (t.id === taskId ? { ...t, ...data.task } : t))
+      );
+      setTaskSaveSuccess(true);
+      setTimeout(() => {
+        setTaskSaveSuccess(false);
+        setEditingTaskId(null);
+      }, 1200);
+    } catch {
+      setTaskSaveError("Network error while updating task");
+    } finally {
+      setSavingTask(false);
     }
   }
 
@@ -316,6 +385,9 @@ export default function AdminPage() {
           t.team_id.toLowerCase().includes(teamSearchLower) ||
           (t.member_names || []).some((n) =>
             n.toLowerCase().includes(teamSearchLower)
+          ) ||
+          (t.colleges || []).some((c) =>
+            c.toLowerCase().includes(teamSearchLower)
           )
       )
     : teams;
@@ -325,7 +397,8 @@ export default function AdminPage() {
     ? submissions.filter(
         (s) =>
           s.member_name.toLowerCase().includes(subSearchLower) ||
-          s.task_title.toLowerCase().includes(subSearchLower)
+          s.task_title.toLowerCase().includes(subSearchLower) ||
+          (s.college_name && s.college_name.toLowerCase().includes(subSearchLower))
       )
     : submissions;
 
@@ -490,48 +563,233 @@ export default function AdminPage() {
               </div>
             </div>
 
-            <div className="space-y-3">
-              {tasks.map((task) => (
-                <div
-                  key={task.id}
-                  className="pro-card rounded-xl p-5 flex items-center justify-between gap-4 bg-white"
-                >
-                  <div className="flex items-center gap-4 min-w-0">
-                    <div
-                      className={`w-9 h-9 rounded-lg flex items-center justify-center font-mono text-xs font-bold shrink-0 ${
-                        task.is_active
-                          ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                          : "bg-slate-100 text-slate-500 border border-slate-200"
-                      }`}
-                    >
-                      #{task.id}
-                    </div>
-                    <div className="min-w-0">
-                      <p className="font-heading font-bold text-base text-slate-900 truncate">
-                        {task.title}
-                      </p>
-                      <p className="text-xs text-slate-500 mt-0.5">
-                        {task.is_active ? (
-                          <span className="text-emerald-700 font-semibold">
-                            ● Active — accepting live participant submissions
-                          </span>
-                        ) : (
-                          <span className="text-slate-400">
-                            ○ Locked — participants cannot enter or submit
-                          </span>
-                        )}
-                      </p>
-                    </div>
-                  </div>
+            <div className="space-y-4">
+              {tasks.map((task) => {
+                const isEditing = editingTaskId === task.id;
+                const hasCustomRules = Boolean(task.rules && task.rules.trim());
 
-                  <button
-                    onClick={() => toggleTask(task.id)}
-                    disabled={togglingTask === task.id}
-                    className={`toggle-switch shrink-0 ${task.is_active ? "active" : ""}`}
-                    aria-label={`Toggle ${task.title}`}
-                  />
-                </div>
-              ))}
+                return (
+                  <div
+                    key={task.id}
+                    className={`pro-card rounded-xl transition-all duration-200 bg-white overflow-hidden border ${
+                      isEditing
+                        ? "border-teal-400 ring-2 ring-teal-500/20 shadow-md"
+                        : "border-slate-200 hover:border-slate-300 shadow-2xs"
+                    }`}
+                  >
+                    {/* Card Header / Summary Row */}
+                    <div className="p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                      <div className="flex items-start sm:items-center gap-4 min-w-0">
+                        <div
+                          className={`w-10 h-10 rounded-lg flex items-center justify-center font-mono text-xs font-bold shrink-0 ${
+                            task.is_active
+                              ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                              : "bg-slate-100 text-slate-500 border border-slate-200"
+                          }`}
+                        >
+                          #{task.id}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h3 className="font-heading font-bold text-base text-slate-900 truncate">
+                              {task.title}
+                            </h3>
+                            {task.id === 1 && (
+                              <span className="px-2 py-0.5 rounded-md bg-blue-50 border border-blue-200 text-blue-700 text-[10px] font-mono font-semibold">
+                                Poster &amp; LinkedIn Task
+                              </span>
+                            )}
+                            {hasCustomRules ? (
+                              <span className="px-2 py-0.5 rounded-md bg-amber-50 border border-amber-200 text-amber-800 text-[10px] font-mono font-semibold">
+                                📜 Custom Rules Active
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded-md bg-slate-50 border border-slate-200 text-slate-500 text-[10px] font-mono">
+                                Default Rules
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs text-slate-500 mt-1 line-clamp-1">
+                            {task.description || "No mission brief provided."}
+                          </p>
+                          <div className="mt-1 flex items-center gap-2">
+                            {task.is_active ? (
+                              <span className="text-emerald-700 font-semibold text-xs flex items-center gap-1">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse" />
+                                Active — live submissions enabled
+                              </span>
+                            ) : (
+                              <span className="text-slate-400 text-xs">
+                                ○ Locked — participants cannot enter or submit
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Action Controls */}
+                      <div className="flex items-center gap-3 shrink-0 self-end sm:self-center">
+                        <button
+                          onClick={() => (isEditing ? cancelEditingTask() : startEditingTask(task))}
+                          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-mono font-semibold transition-colors ${
+                            isEditing
+                              ? "border-slate-300 bg-slate-100 text-slate-700 hover:bg-slate-200"
+                              : "border-teal-200 bg-teal-50 hover:bg-teal-100 text-teal-800"
+                          }`}
+                        >
+                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                          </svg>
+                          <span>{isEditing ? "Close Editor" : "Edit Rules & Details"}</span>
+                        </button>
+
+                        <div className="flex items-center gap-2 pl-2 border-l border-slate-200">
+                          <span className="text-[11px] font-mono text-slate-500 uppercase">
+                            {task.is_active ? "On" : "Off"}
+                          </span>
+                          <button
+                            onClick={() => toggleTask(task.id)}
+                            disabled={togglingTask === task.id}
+                            className={`toggle-switch shrink-0 ${task.is_active ? "active" : ""}`}
+                            aria-label={`Toggle ${task.title}`}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Expanded Drawer / Editor Form */}
+                    {isEditing && (
+                      <div className="border-t border-slate-200 bg-slate-50/70 p-5 sm:p-6 space-y-5">
+                        <div className="flex items-center justify-between pb-3 border-b border-slate-200">
+                          <div className="flex items-center gap-2">
+                            <span className="text-base">⚙️</span>
+                            <h4 className="font-heading font-bold text-sm text-slate-900">
+                              Edit Task #{task.id} Configuration
+                            </h4>
+                          </div>
+                          <span className="text-xs text-slate-500 font-mono">
+                            Changes take effect immediately on task pages
+                          </span>
+                        </div>
+
+                        {/* Title & Description */}
+                        <div className="grid sm:grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-xs font-mono font-semibold uppercase text-slate-700 mb-1.5">
+                              Task Title
+                            </label>
+                            <input
+                              type="text"
+                              className="input-field text-xs sm:text-sm bg-white"
+                              value={taskEditTitle}
+                              onChange={(e) => setTaskEditTitle(e.target.value)}
+                              placeholder="e.g. Task 1 — Share Your Registration Poster"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-mono font-semibold uppercase text-slate-700 mb-1.5">
+                              Mission Brief Summary
+                            </label>
+                            <textarea
+                              rows={2}
+                              className="input-field text-xs sm:text-sm bg-white"
+                              value={taskEditDesc}
+                              onChange={(e) => setTaskEditDesc(e.target.value)}
+                              placeholder="Brief description of the challenge..."
+                            />
+                          </div>
+                        </div>
+
+                        {/* Rules Editor */}
+                        <div>
+                          <div className="flex items-center justify-between mb-1.5">
+                            <label className="block text-xs font-mono font-semibold uppercase text-slate-700">
+                              📜 Official Task Rules &amp; Evaluation Guidelines
+                            </label>
+                            <span className="text-[11px] font-mono text-slate-400">
+                              Visible to participants on /task/{task.id}
+                            </span>
+                          </div>
+                          <textarea
+                            rows={6}
+                            className="input-field text-xs sm:text-sm font-display leading-relaxed bg-white"
+                            value={taskEditRules}
+                            onChange={(e) => setTaskEditRules(e.target.value)}
+                            placeholder="Enter numbered rules, evaluation criteria, submission instructions..."
+                          />
+                          <p className="text-[11px] text-slate-500 mt-1">
+                            Tip: Enter each rule on a new line (e.g. &quot;1. Upload profile photo...&quot;, &quot;2. Submit public URL...&quot;).
+                          </p>
+                        </div>
+
+                        {/* LinkedIn Template Editor */}
+                        <div className="p-4 rounded-xl bg-blue-50/60 border border-blue-200">
+                          <div className="flex items-center justify-between mb-1.5">
+                            <label className="block text-xs font-mono font-semibold uppercase text-blue-900">
+                              📢 LinkedIn Post Message Template
+                            </label>
+                            <span className="text-[11px] font-mono text-blue-600 font-semibold">
+                              Placeholders: &#123;name&#125; &amp; &#123;college&#125;
+                            </span>
+                          </div>
+                          <textarea
+                            rows={6}
+                            className="input-field text-xs sm:text-sm font-mono leading-relaxed bg-white border-blue-200"
+                            value={taskEditTemplate}
+                            onChange={(e) => setTaskEditTemplate(e.target.value)}
+                            placeholder="I am thrilled to announce that I've joined the Tri-City Hackathon 2026! Name: {name}, College: {college}..."
+                          />
+                          <p className="text-[11px] text-blue-700 mt-1.5 font-display">
+                            When participants click &ldquo;Copy Announcement Caption&rdquo; in Task 1, &#123;name&#125; will automatically be replaced with their title-cased name and &#123;college&#125; with their institution.
+                          </p>
+                        </div>
+
+                        {/* Status Messages */}
+                        {taskSaveError && (
+                          <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs font-mono">
+                            {taskSaveError}
+                          </div>
+                        )}
+                        {taskSaveSuccess && (
+                          <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-mono font-semibold flex items-center gap-2">
+                            <span>✓</span>
+                            <span>Task rules &amp; configuration saved successfully!</span>
+                          </div>
+                        )}
+
+                        {/* Action Buttons */}
+                        <div className="flex items-center justify-end gap-3 pt-2">
+                          <button
+                            type="button"
+                            onClick={cancelEditingTask}
+                            disabled={savingTask}
+                            className="btn-secondary text-xs px-4 py-2"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleSaveTask(task.id)}
+                            disabled={savingTask}
+                            className="btn-primary text-xs px-5 py-2 inline-flex items-center gap-2"
+                          >
+                            {savingTask ? (
+                              <>
+                                <span className="w-3.5 h-3.5 rounded-full border-2 border-white border-t-transparent animate-spin" />
+                                <span>Saving...</span>
+                              </>
+                            ) : taskSaveSuccess ? (
+                              <span>✓ Saved!</span>
+                            ) : (
+                              <span>Save Task Rules &amp; Details</span>
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
@@ -630,6 +888,13 @@ export default function AdminPage() {
                                 {team.member_names.join(", ")}
                               </div>
                             )}
+
+                            {team.colleges && team.colleges.length > 0 && (
+                              <div className="text-[11px] text-teal-700 mt-1 font-mono flex items-center gap-1 truncate">
+                                <span>🏫</span>
+                                <span>{team.colleges.join(", ")}</span>
+                              </div>
+                            )}
                           </div>
                         );
                       })}
@@ -705,6 +970,11 @@ export default function AdminPage() {
                                     <span className="font-heading font-bold text-base text-slate-900">
                                       {sub.member_name}
                                     </span>
+                                    {sub.college_name && (
+                                      <span className="px-2 py-0.5 rounded-full text-[11px] font-mono text-slate-600 bg-slate-100 border border-slate-200">
+                                        🏫 {sub.college_name}
+                                      </span>
+                                    )}
                                     <span className="px-2.5 py-0.5 rounded-full text-xs font-mono font-semibold bg-teal-50 text-teal-800 border border-teal-200">
                                       {sub.task_title}
                                     </span>

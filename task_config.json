@@ -1,0 +1,11 @@
+{
+  "1": {
+    "rules": "1. Profile Photo: Upload a high-quality front-facing photo and crop it to fit inside the circular badge frame.\n2. Participant Details: Ensure your full name and college name are spelled correctly before generating your badge.\n3. Download Poster: Generate and download the official high-resolution registration poster image.\n4. LinkedIn Sharing: Post the poster to your LinkedIn profile using the provided caption. Tag @Tri-City Hackathon and @Centle.\n5. Submit Post URL: Copy the public link to your live LinkedIn post and submit it below to register your completion and claim points.\n6. Verification & Fair Play: Each participant submits once. The LinkedIn post must remain public until evaluations conclude. Invalid or broken URLs will be awarded zero points."
+  },
+  "2": {
+    "rules": "testing rules",
+    "linkedin_template": "test linkedin",
+    "title": "Task 2 — Data Hunt",
+    "description": "Hidden within a public dataset lies a critical piece of information. Navigate through the noise, apply filters, and extract the signal. Provide the answer along with the query or method you used to find it."
+  }
+}

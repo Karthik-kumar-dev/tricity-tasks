@@ -2,21 +2,46 @@
 
 import { useEffect, useState, use } from "react";
 import Link from "next/link";
+import Task1PosterFlow from "@/components/Task1PosterFlow";
+
+const POSTER_TASK_ID = 1;
+
+function readIdentityFromCookies() {
+  if (typeof document === "undefined") {
+    return { team_id: "", member_name: "", college_name: "" };
+  }
+  const cookies = document.cookie.split("; ").reduce((acc, c) => {
+    const [key, ...val] = c.split("=");
+    acc[key] = decodeURIComponent(val.join("="));
+    return acc;
+  }, {} as Record<string, string>);
+  return {
+    team_id: cookies.team_id || "",
+    member_name: cookies.member_name || "",
+    college_name: cookies.college_name || "",
+  };
+}
 
 interface TaskData {
   id: number;
   title: string;
   description: string;
+  rules?: string | null;
+  linkedin_template?: string | null;
 }
 
 export default function TaskPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
+  const [mounted, setMounted] = useState(false);
   const [task, setTask] = useState<TaskData | null>(null);
   const [alreadySubmitted, setAlreadySubmitted] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [teamId, setTeamId] = useState("");
-  const [memberName, setMemberName] = useState("");
+  const [identity, setIdentity] = useState({
+    team_id: "",
+    member_name: "",
+    college_name: "",
+  });
 
   // Submission form state
   const [answer, setAnswer] = useState("");
@@ -26,19 +51,11 @@ export default function TaskPage({ params }: { params: Promise<{ id: string }> }
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    // Read cookies
-    const cookies = document.cookie.split("; ").reduce((acc, c) => {
-      const [key, ...val] = c.split("=");
-      acc[key] = decodeURIComponent(val.join("="));
-      return acc;
-    }, {} as Record<string, string>);
+    setMounted(true);
+    const idInfo = readIdentityFromCookies();
+    setIdentity(idInfo);
 
-    const tid = cookies.team_id || "";
-    const mname = cookies.member_name || "";
-    setTeamId(tid);
-    setMemberName(mname);
-
-    if (!tid || !mname) {
+    if (!idInfo.team_id || !idInfo.member_name) {
       setError("Please start this task from the home page to record your team identity.");
       setLoading(false);
       return;
@@ -48,7 +65,11 @@ export default function TaskPage({ params }: { params: Promise<{ id: string }> }
     fetch(`/api/tasks/${id}/start`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ team_id: tid, member_name: mname }),
+      body: JSON.stringify({
+        team_id: idInfo.team_id,
+        member_name: idInfo.member_name,
+        college_name: idInfo.college_name,
+      }),
     })
       .then((res) => res.json())
       .then((data) => {
@@ -73,8 +94,9 @@ export default function TaskPage({ params }: { params: Promise<{ id: string }> }
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          team_id: teamId,
-          member_name: memberName,
+          team_id: identity.team_id,
+          member_name: identity.member_name,
+          college_name: identity.college_name,
           answer,
           link: link || undefined,
         }),
@@ -97,7 +119,7 @@ export default function TaskPage({ params }: { params: Promise<{ id: string }> }
     }
   }
 
-  if (loading) {
+  if (!mounted || loading) {
     return (
       <main className="min-h-screen flex items-center justify-center bg-white text-slate-900">
         <div className="flex flex-col items-center gap-3">
@@ -148,8 +170,16 @@ export default function TaskPage({ params }: { params: Promise<{ id: string }> }
 
           <div className="flex items-center gap-2.5">
             <span className="w-2 h-2 rounded-full bg-teal-600 animate-pulse" />
-            <div className="px-3 py-1 rounded-lg bg-teal-50 border border-teal-200 text-teal-800 text-xs font-mono font-bold">
-              {teamId} · <span className="font-normal text-teal-700">{memberName}</span>
+            <div className="px-3 py-1 rounded-lg bg-teal-50 border border-teal-200 text-teal-800 text-xs font-mono font-bold flex items-center gap-1.5 flex-wrap">
+              <span>{identity.team_id}</span>
+              <span className="text-teal-400">·</span>
+              <span className="font-normal text-teal-700">{identity.member_name}</span>
+              {identity.college_name && (
+                <>
+                  <span className="text-teal-400">·</span>
+                  <span className="font-normal text-teal-600">{identity.college_name}</span>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -181,10 +211,42 @@ export default function TaskPage({ params }: { params: Promise<{ id: string }> }
               {task?.description}
             </p>
           </div>
+
+          {/* Official Rules & Evaluation Guidelines */}
+          {task?.rules && task.rules.trim() && (
+            <div className="mt-5 rounded-xl border border-amber-300/80 bg-gradient-to-br from-amber-50/90 via-amber-50/50 to-orange-50/30 p-5 sm:p-6 shadow-xs">
+              <div className="flex items-center justify-between gap-3 mb-3 border-b border-amber-200/70 pb-2.5">
+                <div className="flex items-center gap-2">
+                  <span className="flex h-6 w-6 items-center justify-center rounded-md bg-amber-500 text-white text-xs">
+                    📜
+                  </span>
+                  <h3 className="font-heading font-bold text-sm sm:text-base text-amber-950">
+                    Official Rules &amp; Submission Guidelines
+                  </h3>
+                </div>
+                <span className="rounded-full bg-amber-100/90 px-2.5 py-0.5 text-[10px] font-mono font-bold uppercase tracking-wider text-amber-800 border border-amber-200">
+                  Mandatory
+                </span>
+              </div>
+              <div className="text-xs sm:text-sm text-amber-950 leading-relaxed font-display whitespace-pre-wrap pl-1">
+                {task.rules}
+              </div>
+            </div>
+          )}
         </div>
 
-        {/* Submission Section */}
-        {alreadySubmitted ? (
+        {/* Task 1 — Share Your Registration Poster (special flow) */}
+        {task && task.id === POSTER_TASK_ID ? (
+          <Task1PosterFlow
+            teamId={identity.team_id}
+            memberName={identity.member_name}
+            collegeName={identity.college_name}
+            rules={task.rules}
+            customTemplate={task.linkedin_template}
+          />
+        ) : (
+          /* Submission Section */
+          alreadySubmitted ? (
           <div className="pro-card rounded-2xl p-8 sm:p-10 text-center bg-white border-emerald-200 shadow-xs">
             <div className="w-16 h-16 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-600 flex items-center justify-center mx-auto mb-4 text-2xl font-bold">
               ✓
@@ -274,6 +336,7 @@ export default function TaskPage({ params }: { params: Promise<{ id: string }> }
               </div>
             </form>
           </div>
+          )
         )}
       </main>
 

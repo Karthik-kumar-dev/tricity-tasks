@@ -12,6 +12,7 @@ function buildRowsFromSubmissions(
   submissions: {
     team_id: string;
     member_name: string;
+    college_name?: string | null;
     task_id: number;
     task_title: string;
     answer: string;
@@ -23,6 +24,7 @@ function buildRowsFromSubmissions(
   return submissions.map((s) => [
     s.team_id,
     s.member_name,
+    s.college_name || "—",
     s.task_title,
     s.answer,
     s.link || "",
@@ -144,7 +146,7 @@ export async function GET(request: NextRequest) {
 
   let query = supabase
     .from("submissions")
-    .select("team_id, member_name, task_id, answer, link, score, created_at");
+    .select("team_id, member_name, college_name, task_id, answer, link, score, created_at");
 
   if (taskId) {
     const parsed = parseInt(taskId, 10);
@@ -157,9 +159,23 @@ export async function GET(request: NextRequest) {
     query = query.eq("team_id", teamId);
   }
 
-  const { data: submissions, error } = await query
+  let { data: submissions, error } = await query
     .order("team_id", { ascending: true })
     .order("task_id", { ascending: true });
+
+  // Fallback if college_name column does not exist yet in Supabase
+  if (error && (error.code === "42703" || error.message?.includes("college_name"))) {
+    let fallbackQuery = supabase
+      .from("submissions")
+      .select("team_id, member_name, task_id, answer, link, score, created_at");
+    if (taskId) fallbackQuery = fallbackQuery.eq("task_id", parseInt(taskId, 10));
+    if (teamId) fallbackQuery = fallbackQuery.eq("team_id", teamId);
+    const retry = await fallbackQuery
+      .order("team_id", { ascending: true })
+      .order("task_id", { ascending: true });
+    submissions = (retry.data || []).map((s) => ({ ...s, college_name: null }));
+    error = retry.error;
+  }
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -181,6 +197,7 @@ export async function GET(request: NextRequest) {
   const dataHeader = [
     "Team ID",
     "Member Name",
+    "College",
     "Task",
     "Answer",
     "Link",
