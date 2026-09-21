@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSupabase } from "@/lib/supabase-server";
+import { computeTeamScores } from "@/lib/scoring";
 
 export const dynamic = "force-dynamic";
 
@@ -9,83 +10,34 @@ export async function GET(request: Request) {
 
   const supabase = getSupabase();
 
-  // Get all submissions with task_id for per-task average calculation
-  const { data: submissions, error } = await supabase
-    .from("submissions")
-    .select("team_id, task_id, score");
+  // Fetch submissions and registrations concurrently
+  const [submissionsRes, registrationsRes] = await Promise.all([
+    supabase
+      .from("submissions")
+      .select("team_id, member_name, member_name_normalized, college_name, task_id, score"),
+    supabase
+      .from("registrations")
+      .select("registration_id, member_name"),
+  ]);
 
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  if (submissionsRes.error) {
+    return NextResponse.json({ error: submissionsRes.error.message }, { status: 500 });
   }
 
-  // Aggregate by team
-  const teamMap = new Map<
-    string,
-    {
-      taskScores: Map<number, number[]>; // task_id -> array of scores
-      totalScore: number;
-      scoredCount: number;
-    }
-  >();
+  const submissions = submissionsRes.data || [];
+  const registrations = registrationsRes.data || [];
 
-  for (const sub of submissions || []) {
-    const team = teamMap.get(sub.team_id) || {
-      taskScores: new Map<number, number[]>(),
-      totalScore: 0,
-      scoredCount: 0,
-    };
-
-    if (sub.score !== null && sub.score !== undefined) {
-      // Track per-task scores
-      const taskArr = team.taskScores.get(sub.task_id) || [];
-      taskArr.push(sub.score);
-      team.taskScores.set(sub.task_id, taskArr);
-
-      team.totalScore += sub.score;
-      team.scoredCount++;
-    }
-
-    teamMap.set(sub.team_id, team);
-  }
-
-  const teams = Array.from(teamMap.entries()).map(([teamId, data]) => {
-    // Calculate average score per task, then overall average across tasks
-    const taskAverages: { task_id: number; avg: number }[] = [];
-    for (const [taskId, scores] of data.taskScores.entries()) {
-      const avg = Math.round((scores.reduce((a, b) => a + b, 0) / scores.length) * 10) / 10;
-      taskAverages.push({ task_id: taskId, avg });
-    }
-
-    // Overall average = average of all task averages
-    const overallAvg =
-      taskAverages.length > 0
-        ? Math.round(
-            (taskAverages.reduce((sum, t) => sum + t.avg, 0) / taskAverages.length) * 10
-          ) / 10
-        : null;
-
-    return {
-      team_id: teamId,
-      total_score: data.totalScore,
-      avg_score: overallAvg,
-      tasks_scored: taskAverages.length,
-      task_averages: taskAverages.sort((a, b) => a.task_id - b.task_id),
-    };
-  });
-
-  // Sort by total score descending
-  teams.sort(
-    (a, b) => (b.total_score || 0) - (a.total_score || 0) || a.team_id.localeCompare(b.team_id)
-  );
+  const teams = computeTeamScores(submissions, registrations);
 
   // If searching for a specific team
   if (searchTeamId) {
+    const cleanSearch = searchTeamId.trim().toLowerCase();
     const found = teams.find(
-      (t) => t.team_id.toLowerCase() === searchTeamId.toLowerCase()
+      (t) => t.team_id.toLowerCase() === cleanSearch
     );
     const rank = found
       ? teams.findIndex(
-          (t) => t.team_id.toLowerCase() === searchTeamId.toLowerCase()
+          (t) => t.team_id.toLowerCase() === cleanSearch
         ) + 1
       : null;
     return NextResponse.json({

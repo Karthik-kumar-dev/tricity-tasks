@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import * as XLSX from "xlsx";
 import { getSupabase } from "@/lib/supabase-server";
 import { verifyAdmin } from "@/lib/auth";
+import { MAX_SCORE, TASK_POINTS } from "@/lib/constants";
+import { computeTeamScores, SubmissionRow, RegistrationRow } from "@/lib/scoring";
 
 export const dynamic = "force-dynamic";
 
@@ -40,44 +42,10 @@ function buildRowsFromSubmissions(
 }
 
 function buildLeaderboardRows(
-  submissions: {
-    team_id: string;
-    member_name: string;
-    score: number | null;
-  }[]
+  submissions: SubmissionRow[],
+  registrations: RegistrationRow[] = []
 ): (string | number)[][] {
-  const teamMap = new Map<
-    string,
-    { members: Set<string>; count: number; total: number; scoredCount: number }
-  >();
-
-  for (const s of submissions) {
-    const t = teamMap.get(s.team_id) || {
-      members: new Set<string>(),
-      count: 0,
-      total: 0,
-      scoredCount: 0,
-    };
-    t.members.add(s.member_name.toLowerCase());
-    t.count++;
-    if (s.score !== null && s.score !== undefined) {
-      t.total += s.score;
-      t.scoredCount++;
-    }
-    teamMap.set(s.team_id, t);
-  }
-
-  const teams = Array.from(teamMap.entries()).map(([teamId, d]) => ({
-    team_id: teamId,
-    member_count: d.members.size,
-    submission_count: d.count,
-    avg_score: d.scoredCount > 0 ? Math.round((d.total / d.scoredCount) * 10) / 10 : null,
-    total_score: d.total,
-  }));
-
-  teams.sort(
-    (a, b) => (b.total_score || 0) - (a.total_score || 0) || a.team_id.localeCompare(b.team_id)
-  );
+  const teams = computeTeamScores(submissions, registrations);
 
   return teams.map((t, i) => [
     i + 1,
@@ -182,7 +150,10 @@ export async function GET(request: NextRequest) {
   }
 
   // Task titles for readable export
-  const { data: tasks } = await supabase.from("tasks").select("id, title");
+  const [{ data: tasks }, { data: registrations }] = await Promise.all([
+    supabase.from("tasks").select("id, title"),
+    supabase.from("registrations").select("registration_id, member_name"),
+  ]);
   const taskMap = new Map((tasks || []).map((t) => [t.id, t.title]));
 
   const enriched = (submissions || []).map((s) => ({
@@ -201,7 +172,7 @@ export async function GET(request: NextRequest) {
     "Task",
     "Answer",
     "Link",
-    "Score / 100",
+    `Score / ${TASK_POINTS}`,
     "Submitted At",
   ];
   const dataAoa = [dataHeader, ...buildRowsFromSubmissions(enriched)];
@@ -210,8 +181,15 @@ export async function GET(request: NextRequest) {
   XLSX.utils.book_append_sheet(wb, dataWs, "Submissions");
 
   // Leaderboard summary sheet
-  const lbHeader = ["Rank", "Team ID", "Members", "Submissions", "Avg Score", "Total Score"];
-  const lbAoa = [lbHeader, ...buildLeaderboardRows(enriched)];
+  const lbHeader = [
+    "Rank",
+    "Team ID",
+    "Members",
+    "Submissions",
+    `Avg / Task (Max ${TASK_POINTS})`,
+    `Total Score (Max ${MAX_SCORE})`,
+  ];
+  const lbAoa = [lbHeader, ...buildLeaderboardRows(enriched, registrations || [])];
   const lbWs = XLSX.utils.aoa_to_sheet(lbAoa);
   styleSheet(lbWs, lbAoa);
   XLSX.utils.book_append_sheet(wb, lbWs, "Leaderboard");

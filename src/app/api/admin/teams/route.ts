@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSupabase } from "@/lib/supabase-server";
 import { verifyAdmin } from "@/lib/auth";
+import { computeTeamScores } from "@/lib/scoring";
 
 export const dynamic = "force-dynamic";
 
@@ -12,16 +13,24 @@ export async function GET() {
 
   const supabase = getSupabase();
 
-  // Get all submissions grouped by team_id
-  let { data: submissions, error } = await supabase
-    .from("submissions")
-    .select("team_id, member_name, member_name_normalized, college_name, score");
+  // Fetch submissions and registrations concurrently
+  const [submissionsRes, registrationsRes] = await Promise.all([
+    supabase
+      .from("submissions")
+      .select("team_id, member_name, member_name_normalized, college_name, task_id, score"),
+    supabase
+      .from("registrations")
+      .select("registration_id, member_name"),
+  ]);
+
+  let submissions = submissionsRes.data;
+  let error = submissionsRes.error;
 
   // Fallback if college_name column does not exist yet in Supabase
   if (error && (error.code === "42703" || error.message?.includes("college_name"))) {
     const retry = await supabase
       .from("submissions")
-      .select("team_id, member_name, member_name_normalized, score");
+      .select("team_id, member_name, member_name_normalized, task_id, score");
     submissions = (retry.data || []).map((s) => ({ ...s, college_name: null }));
     error = retry.error;
   }
@@ -30,54 +39,8 @@ export async function GET() {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  // Aggregate by team
-  const teamMap = new Map<
-    string,
-    {
-      members: Set<string>;
-      memberNames: Set<string>;
-      colleges: Set<string>;
-      submissionCount: number;
-      scoredTotal: number;
-      scoredCount: number;
-    }
-  >();
-
-  for (const sub of submissions || []) {
-    const team = teamMap.get(sub.team_id) || {
-      members: new Set<string>(),
-      memberNames: new Set<string>(),
-      colleges: new Set<string>(),
-      submissionCount: 0,
-      scoredTotal: 0,
-      scoredCount: 0,
-    };
-    team.members.add(sub.member_name_normalized);
-    if (sub.member_name) team.memberNames.add(sub.member_name);
-    if (sub.college_name) team.colleges.add(sub.college_name);
-    team.submissionCount++;
-    if (sub.score !== null && sub.score !== undefined) {
-      team.scoredTotal += sub.score;
-      team.scoredCount++;
-    }
-    teamMap.set(sub.team_id, team);
-  }
-
-  const teams = Array.from(teamMap.entries()).map(([teamId, data]) => ({
-    team_id: teamId,
-    member_count: data.members.size,
-    submission_count: data.submissionCount,
-    avg_score:
-      data.scoredCount > 0
-        ? Math.round((data.scoredTotal / data.scoredCount) * 10) / 10
-        : null,
-    total_score: data.scoredTotal,
-    member_names: Array.from(data.memberNames),
-    colleges: Array.from(data.colleges),
-  }));
-
-  // Sort by total score descending, then team_id
-  teams.sort((a, b) => (b.total_score || 0) - (a.total_score || 0) || a.team_id.localeCompare(b.team_id));
+  const registrations = registrationsRes.data || [];
+  const teams = computeTeamScores(submissions || [], registrations);
 
   return NextResponse.json({ teams });
 }

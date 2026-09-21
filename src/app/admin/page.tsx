@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
+import { MAX_SCORE, TASK_POINTS } from "@/lib/constants";
 
 interface Task {
   id: number;
@@ -10,6 +11,7 @@ interface Task {
   is_active: boolean;
   rules?: string | null;
   linkedin_template?: string | null;
+  instagram_template?: string | null;
 }
 
 interface Team {
@@ -34,6 +36,77 @@ interface Submission {
   created_at: string;
 }
 
+// RFC 4180 CSV parser for client preview
+function parseCsvClient(csvText: string): {
+  headers: string[];
+  records: Record<string, string>[];
+} {
+  const lines: string[][] = [];
+  let currentRow: string[] = [];
+  let currentCell = "";
+  let insideQuotes = false;
+
+  for (let i = 0; i < csvText.length; i++) {
+    const char = csvText[i];
+    const nextChar = csvText[i + 1];
+
+    if (insideQuotes) {
+      if (char === '"' && nextChar === '"') {
+        currentCell += '"';
+        i++;
+      } else if (char === '"') {
+        insideQuotes = false;
+      } else {
+        currentCell += char;
+      }
+    } else {
+      if (char === '"') {
+        insideQuotes = true;
+      } else if (char === ",") {
+        currentRow.push(currentCell.trim());
+        currentCell = "";
+      } else if (char === "\r" || char === "\n") {
+        if (char === "\r" && nextChar === "\n") {
+          i++;
+        }
+        currentRow.push(currentCell.trim());
+        currentCell = "";
+        if (currentRow.some((c) => c.length > 0)) {
+          lines.push(currentRow);
+        }
+        currentRow = [];
+      } else {
+        currentCell += char;
+      }
+    }
+  }
+
+  if (currentCell.length > 0 || currentRow.length > 0) {
+    currentRow.push(currentCell.trim());
+    if (currentRow.some((c) => c.length > 0)) {
+      lines.push(currentRow);
+    }
+  }
+
+  if (lines.length === 0) {
+    return { headers: [], records: [] };
+  }
+
+  const rawHeaders = lines[0];
+  const records: Record<string, string>[] = [];
+
+  for (let r = 1; r < lines.length; r++) {
+    const row = lines[r];
+    const record: Record<string, string> = {};
+    for (let c = 0; c < rawHeaders.length; c++) {
+      record[rawHeaders[c]] = row[c] !== undefined ? row[c].trim() : "";
+    }
+    records.push(record);
+  }
+
+  return { headers: rawHeaders, records };
+}
+
 export default function AdminPage() {
   const [authenticated, setAuthenticated] = useState(false);
   const [checking, setChecking] = useState(true);
@@ -47,7 +120,23 @@ export default function AdminPage() {
   const [submissions, setSubmissions] = useState<Submission[]>([]);
   const [loadingTeam, setLoadingTeam] = useState(false);
   const [togglingTask, setTogglingTask] = useState<number | null>(null);
-  const [activeTab, setActiveTab] = useState<"tasks" | "teams">("tasks");
+  const [activeTab, setActiveTab] = useState<"tasks" | "teams" | "registrations">("tasks");
+
+  // Registrations CSV upload state
+  const [regFile, setRegFile] = useState<File | null>(null);
+  const [regParsing, setRegParsing] = useState(false);
+  const [regError, setRegError] = useState("");
+  const [regSuccess, setRegSuccess] = useState("");
+  const [regPreview, setRegPreview] = useState<{
+    headers: string[];
+    validRows: Array<{ registration_id: string; team_name: string; role: string; member_name: string }>;
+    teamCount: number;
+    skippedCount: number;
+    totalParsedRows: number;
+  } | null>(null);
+  const [confirmReplaceModal, setConfirmReplaceModal] = useState(false);
+  const [uploadingReg, setUploadingReg] = useState(false);
+  const [currentRegStats, setCurrentRegStats] = useState<{ teamCount: number } | null>(null);
 
   // Task editing state (rules, template, description)
   const [editingTaskId, setEditingTaskId] = useState<number | null>(null);
@@ -55,6 +144,7 @@ export default function AdminPage() {
   const [taskEditDesc, setTaskEditDesc] = useState("");
   const [taskEditRules, setTaskEditRules] = useState("");
   const [taskEditTemplate, setTaskEditTemplate] = useState("");
+  const [taskEditInstagramTemplate, setTaskEditInstagramTemplate] = useState("");
   const [savingTask, setSavingTask] = useState(false);
   const [taskSaveSuccess, setTaskSaveSuccess] = useState(false);
   const [taskSaveError, setTaskSaveError] = useState("");
@@ -89,9 +179,167 @@ export default function AdminPage() {
     fetchTeams().then((ok) => {
       setAuthenticated(ok);
       setChecking(false);
-      if (ok) fetchTasks();
+      if (ok) {
+        fetchTasks();
+        fetchRegStats();
+      }
     });
   }, []);
+
+  async function fetchRegStats() {
+    try {
+      const res = await fetch("/api/teams");
+      const data = await res.json();
+      if (data.teams) {
+        setCurrentRegStats({ teamCount: data.teams.length });
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  function handleCsvFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    processCsvFile(file);
+  }
+
+  async function processCsvFile(file: File) {
+    setRegFile(file);
+    setRegError("");
+    setRegSuccess("");
+    setRegPreview(null);
+    setRegParsing(true);
+
+    try {
+      const text = await file.text();
+      if (!text.trim()) {
+        setRegError("The selected CSV file is empty.");
+        setRegParsing(false);
+        return;
+      }
+
+      const { headers, records } = parseCsvClient(text);
+
+      if (headers.length === 0) {
+        setRegError("No header row found in the CSV file.");
+        setRegParsing(false);
+        return;
+      }
+
+      const findHeader = (target: string): string | undefined => {
+        const normTarget = target.toLowerCase().replace(/[\s_-]+/g, "");
+        return headers.find(
+          (h) => h.toLowerCase().replace(/[\s_-]+/g, "") === normTarget
+        );
+      };
+
+      const regIdH = findHeader("Registration ID") || findHeader("RegistrationID");
+      const teamNameH = findHeader("Team Name") || findHeader("TeamName");
+      const roleH = findHeader("Role");
+      const nameH = findHeader("Name") || findHeader("Member Name") || findHeader("MemberName");
+
+      const missing: string[] = [];
+      if (!regIdH) missing.push('"Registration ID"');
+      if (!teamNameH) missing.push('"Team Name"');
+      if (!roleH) missing.push('"Role"');
+      if (!nameH) missing.push('"Name"');
+
+      if (missing.length > 0) {
+        setRegError(
+          `Missing required header${missing.length > 1 ? "s" : ""}: ${missing.join(", ")}. Required headers are: "Registration ID", "Team Name", "Role", "Name". (Found headers in file: ${headers.map((h) => `"${h}"`).join(", ")})`
+        );
+        setRegParsing(false);
+        return;
+      }
+
+      const validRows: Array<{ registration_id: string; team_name: string; role: string; member_name: string }> = [];
+      const distinctTeams = new Set<string>();
+      const seenKeys = new Set<string>();
+      let skippedCount = 0;
+
+      for (const rec of records) {
+        const regId = (rec[regIdH!] || "").trim();
+        const teamName = (rec[teamNameH!] || "").trim();
+        const role = (rec[roleH!] || "").trim();
+        const memberName = (rec[nameH!] || "").trim();
+
+        // Skip blank rows or rows missing Registration ID or Name
+        if (!regId || !memberName) {
+          skippedCount++;
+          continue;
+        }
+
+        const uniqueKey = `${regId.toLowerCase()}:::${role.toLowerCase()}`;
+        if (seenKeys.has(uniqueKey)) {
+          skippedCount++;
+          continue;
+        }
+        seenKeys.add(uniqueKey);
+
+        distinctTeams.add(regId.toLowerCase());
+        validRows.push({
+          registration_id: regId,
+          team_name: teamName,
+          role: role,
+          member_name: memberName,
+        });
+      }
+
+      if (validRows.length === 0) {
+        setRegError("No valid rows found in the CSV. Every row was either blank or missing Registration ID or Name.");
+        setRegParsing(false);
+        return;
+      }
+
+      setRegPreview({
+        headers: ["Registration ID", "Team Name", "Role", "Name"],
+        validRows,
+        teamCount: distinctTeams.size,
+        skippedCount,
+        totalParsedRows: records.length,
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to parse CSV";
+      setRegError(`CSV parse error: ${msg}`);
+    } finally {
+      setRegParsing(false);
+    }
+  }
+
+  async function handleConfirmReplace() {
+    if (!regFile) return;
+    setUploadingReg(true);
+    setRegError("");
+    setRegSuccess("");
+
+    try {
+      const formData = new FormData();
+      formData.append("file", regFile);
+
+      const res = await fetch("/api/admin/registrations/upload", {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        setRegError(data.error || "Failed to upload and replace registrations.");
+      } else {
+        setRegSuccess(
+          `Successfully replaced registrations! ${data.inserted} member rows inserted across ${data.team_count} unique teams. (${data.skipped} rows skipped).`
+        );
+        setConfirmReplaceModal(false);
+        setRegPreview(null);
+        setRegFile(null);
+        fetchRegStats();
+      }
+    } catch {
+      setRegError("Network error occurred while uploading registrations.");
+    } finally {
+      setUploadingReg(false);
+    }
+  }
 
   async function fetchTeams(): Promise<boolean> {
     try {
@@ -176,6 +424,7 @@ export default function AdminPage() {
     setTaskEditDesc(task.description || "");
     setTaskEditRules(task.rules || "");
     setTaskEditTemplate(task.linkedin_template || "");
+    setTaskEditInstagramTemplate(task.instagram_template || "");
     setTaskSaveSuccess(false);
     setTaskSaveError("");
   }
@@ -200,6 +449,7 @@ export default function AdminPage() {
           description: taskEditDesc,
           rules: taskEditRules,
           linkedin_template: taskEditTemplate,
+          instagram_template: taskEditInstagramTemplate,
         }),
       });
 
@@ -544,6 +794,16 @@ export default function AdminPage() {
           >
             Teams, Submissions &amp; Scores ({teams.length})
           </button>
+          <button
+            onClick={() => setActiveTab("registrations")}
+            className={`py-3.5 text-xs font-mono font-bold tracking-wider uppercase border-b-2 transition-colors ${
+              activeTab === "registrations"
+                ? "border-teal-700 text-teal-700"
+                : "border-transparent text-slate-500 hover:text-slate-800"
+            }`}
+          >
+            Upload Registrations CSV {currentRegStats ? `(${currentRegStats.teamCount} teams)` : ""}
+          </button>
         </div>
       </div>
 
@@ -740,7 +1000,29 @@ export default function AdminPage() {
                             placeholder="I am thrilled to announce that I've joined the Tri-City Hackathon 2026! Name: {name}, College: {college}..."
                           />
                           <p className="text-[11px] text-blue-700 mt-1.5 font-display">
-                            When participants click &ldquo;Copy Announcement Caption&rdquo; in Task 1, &#123;name&#125; will automatically be replaced with their title-cased name and &#123;college&#125; with their institution.
+                            When participants click &ldquo;Copy LinkedIn Caption&rdquo; in Task 1, &#123;name&#125; will automatically be replaced with their title-cased name and &#123;college&#125; with their institution.
+                          </p>
+                        </div>
+
+                        {/* Instagram Template Editor */}
+                        <div className="p-4 rounded-xl bg-rose-50/60 border border-rose-200">
+                          <div className="flex items-center justify-between mb-1.5">
+                            <label className="block text-xs font-mono font-semibold uppercase text-rose-900">
+                              📸 Instagram Post &amp; Story Message Template
+                            </label>
+                            <span className="text-[11px] font-mono text-rose-600 font-semibold">
+                              Placeholders: &#123;name&#125; &amp; &#123;college&#125;
+                            </span>
+                          </div>
+                          <textarea
+                            rows={6}
+                            className="input-field text-xs sm:text-sm font-mono leading-relaxed bg-white border-rose-200"
+                            value={taskEditInstagramTemplate}
+                            onChange={(e) => setTaskEditInstagramTemplate(e.target.value)}
+                            placeholder="Registered for the TRI-CITY AI HACKATHON 2026! Name: {name}, College: {college}..."
+                          />
+                          <p className="text-[11px] text-rose-700 mt-1.5 font-display">
+                            When participants click &ldquo;Copy Instagram Caption&rdquo; in Task 1, &#123;name&#125; will automatically be replaced with their title-cased name and &#123;college&#125; with their institution.
                           </p>
                         </div>
 
@@ -855,7 +1137,7 @@ export default function AdminPage() {
                               <div className="flex items-center gap-2">
                                 <span className="font-mono text-xs font-bold text-teal-700">
                                   {team.total_score}
-                                  <span className="text-[10px] text-slate-400 font-normal">/500</span>
+                                  <span className="text-[10px] text-slate-400 font-normal">/{MAX_SCORE}</span>
                                 </span>
 
                                 <button
@@ -1019,7 +1301,7 @@ export default function AdminPage() {
                                       <input
                                         type="number"
                                         min="0"
-                                        max="100"
+                                        max={TASK_POINTS}
                                         className="input-field w-18 text-center text-xs py-1"
                                         value={scoreValue}
                                         onChange={(e) => setScoreValue(e.target.value)}
@@ -1058,7 +1340,7 @@ export default function AdminPage() {
                                       }`}
                                     >
                                       {sub.score !== null ? (
-                                        <span>{sub.score} / 100</span>
+                                        <span>{sub.score} / {TASK_POINTS}</span>
                                       ) : (
                                         <span>Assign Score</span>
                                       )}
@@ -1072,17 +1354,68 @@ export default function AdminPage() {
                                 {sub.answer}
                               </div>
 
-                              {sub.link && (
-                                <a
-                                  href={sub.link}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="inline-flex items-center gap-1.5 text-xs font-mono text-teal-700 hover:underline mt-2.5"
-                                >
-                                  <span>🔗 External URL:</span>
-                                  <span className="truncate max-w-md">{sub.link}</span>
-                                </a>
-                              )}
+                              {/* Links Rendering */}
+                              {(() => {
+                                let instaUrl = "";
+                                let linkedUrl = "";
+                                if (sub.answer) {
+                                  const im = sub.answer.match(/Instagram:\s*(https:\/\/[^\s\n]+)/i);
+                                  if (im) instaUrl = im[1];
+                                  const lm = sub.answer.match(/LinkedIn:\s*(https:\/\/[^\s\n]+)/i);
+                                  if (lm) linkedUrl = lm[1];
+                                }
+                                if (!instaUrl && sub.link && /^https:\/\/(www\.)?instagram\.com\//i.test(sub.link)) {
+                                  instaUrl = sub.link;
+                                }
+                                if (!linkedUrl && sub.link && /^https:\/\/(www\.)?linkedin\.com\//i.test(sub.link)) {
+                                  linkedUrl = sub.link;
+                                }
+
+                                if (instaUrl || linkedUrl) {
+                                  return (
+                                    <div className="flex flex-wrap gap-2 mt-2.5">
+                                      {instaUrl && (
+                                        <a
+                                          href={instaUrl}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono font-semibold bg-rose-50 border border-rose-200 text-rose-700 hover:bg-rose-100 transition-colors"
+                                        >
+                                          <span>📸 Instagram Post:</span>
+                                          <span className="truncate max-w-xs">{instaUrl}</span>
+                                        </a>
+                                      )}
+                                      {linkedUrl && (
+                                        <a
+                                          href={linkedUrl}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono font-semibold bg-blue-50 border border-blue-200 text-blue-700 hover:bg-blue-100 transition-colors"
+                                        >
+                                          <span>💼 LinkedIn Post:</span>
+                                          <span className="truncate max-w-xs">{linkedUrl}</span>
+                                        </a>
+                                      )}
+                                    </div>
+                                  );
+                                }
+
+                                if (sub.link) {
+                                  return (
+                                    <a
+                                      href={sub.link}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="inline-flex items-center gap-1.5 text-xs font-mono text-teal-700 hover:underline mt-2.5"
+                                    >
+                                      <span>🔗 External URL:</span>
+                                      <span className="truncate max-w-md">{sub.link}</span>
+                                    </a>
+                                  );
+                                }
+
+                                return null;
+                              })()}
                             </div>
                           ))}
                         </div>
@@ -1094,7 +1427,247 @@ export default function AdminPage() {
             )}
           </div>
         )}
+
+        {/* ── TAB 3: REGISTRATIONS CSV UPLOAD ── */}
+        {activeTab === "registrations" && (
+          <div className="max-w-4xl mx-auto space-y-6">
+            <div className="flex items-center justify-between mb-2">
+              <div>
+                <h2 className="font-heading font-bold text-lg text-slate-900">
+                  Team Registrations CSV Management
+                </h2>
+                <p className="text-xs text-slate-500 font-display">
+                  Upload your registered teams CSV. Replaces all rows in the &quot;registrations&quot; table in a single atomic transaction without touching submissions or any other tables.
+                </p>
+              </div>
+              {currentRegStats && (
+                <div className="px-3 py-1.5 rounded-lg bg-teal-50 border border-teal-200 text-teal-800 font-mono text-xs">
+                  Active Teams: <strong>{currentRegStats.teamCount}</strong>
+                </div>
+              )}
+            </div>
+
+            {/* Upload Box Card */}
+            <div className="pro-card rounded-2xl p-6 bg-white border border-slate-200 shadow-2xs space-y-5">
+              <div className="border-2 border-dashed border-slate-200 hover:border-teal-500 rounded-xl p-6 text-center transition-colors bg-slate-50/50">
+                <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-teal-50 border border-teal-200 flex items-center justify-center text-teal-700 text-xl font-bold">
+                  📄
+                </div>
+                <h3 className="font-heading font-bold text-sm text-slate-900 mb-1">
+                  Select or Drop Registrations CSV
+                </h3>
+                <p className="text-xs text-slate-500 font-display mb-4 max-w-md mx-auto">
+                  Required column headers (matched case-insensitively by name):
+                  <br />
+                  <code className="text-[11px] font-mono font-semibold text-teal-700 bg-teal-50 px-2 py-0.5 rounded mt-1 inline-block">
+                    Registration ID, Team Name, Role, Name
+                  </code>
+                </p>
+
+                <label className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-teal-700 hover:bg-teal-800 text-white font-mono text-xs font-semibold uppercase tracking-wider cursor-pointer shadow-sm transition-colors">
+                  <span>Browse CSV File</span>
+                  <input
+                    type="file"
+                    accept=".csv,text/csv"
+                    className="hidden"
+                    onChange={handleCsvFileSelect}
+                  />
+                </label>
+
+                {regFile && (
+                  <p className="mt-3 text-xs font-mono text-slate-700">
+                    Selected file: <strong className="text-teal-800">{regFile.name}</strong> ({Math.round(regFile.size / 1024)} KB)
+                  </p>
+                )}
+              </div>
+
+              {/* Parsing State */}
+              {regParsing && (
+                <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 text-slate-600 text-xs font-mono flex items-center gap-2">
+                  <div className="w-4 h-4 border-2 border-teal-600 border-t-transparent rounded-full animate-spin" />
+                  Parsing and validating CSV headers...
+                </div>
+              )}
+
+              {/* Error Banner */}
+              {regError && (
+                <div className="p-4 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs font-mono leading-relaxed">
+                  <div className="font-bold mb-1 flex items-center gap-1.5">
+                    <span>⚠</span> CSV Validation Error
+                  </div>
+                  {regError}
+                </div>
+              )}
+
+              {/* Success Banner */}
+              {regSuccess && (
+                <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-mono leading-relaxed">
+                  <div className="font-bold mb-1 flex items-center gap-1.5">
+                    <span>✓</span> Operation Successful
+                  </div>
+                  {regSuccess}
+                </div>
+              )}
+
+              {/* Preview Card */}
+              {regPreview && (
+                <div className="space-y-4 pt-2 border-t border-slate-100">
+                  <div className="flex items-center justify-between">
+                    <h4 className="font-heading font-bold text-sm text-slate-900">
+                      CSV Import Preview
+                    </h4>
+                    <span className="text-[11px] font-mono text-slate-500">
+                      Total rows read: {regPreview.totalParsedRows}
+                    </span>
+                  </div>
+
+                  {/* Summary Metric Chips */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="p-3 rounded-xl bg-emerald-50/70 border border-emerald-200/80 text-emerald-900">
+                      <span className="text-[11px] font-mono uppercase font-bold text-emerald-700 block">
+                        Rows to Insert
+                      </span>
+                      <span className="text-xl font-heading font-black">
+                        {regPreview.validRows.length}
+                      </span>
+                      <span className="text-[11px] font-display text-emerald-600 block">
+                        members ready to import
+                      </span>
+                    </div>
+
+                    <div className="p-3 rounded-xl bg-teal-50/70 border border-teal-200/80 text-teal-900">
+                      <span className="text-[11px] font-mono uppercase font-bold text-teal-700 block">
+                        Unique Teams
+                      </span>
+                      <span className="text-xl font-heading font-black">
+                        {regPreview.teamCount}
+                      </span>
+                      <span className="text-[11px] font-display text-teal-600 block">
+                        distinct Registration IDs
+                      </span>
+                    </div>
+
+                    <div className="p-3 rounded-xl bg-amber-50/70 border border-amber-200/80 text-amber-900">
+                      <span className="text-[11px] font-mono uppercase font-bold text-amber-700 block">
+                        Rows Skipped
+                      </span>
+                      <span className="text-xl font-heading font-black">
+                        {regPreview.skippedCount}
+                      </span>
+                      <span className="text-[11px] font-display text-amber-600 block">
+                        blank or missing ID/Name
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Preview Table */}
+                  <div className="rounded-xl border border-slate-200 overflow-hidden">
+                    <div className="bg-slate-50 px-4 py-2 border-b border-slate-200 flex justify-between items-center text-xs font-mono font-semibold text-slate-700">
+                      <span>Previewing First 8 Rows</span>
+                      <span className="text-[11px] text-slate-500">
+                        {regPreview.validRows.length} total valid entries
+                      </span>
+                    </div>
+                    <div className="overflow-x-auto max-h-64">
+                      <table className="w-full text-left text-xs font-mono">
+                        <thead className="bg-slate-100/70 text-slate-600 border-b border-slate-200 text-[11px] uppercase">
+                          <tr>
+                            <th className="px-3 py-2">#</th>
+                            <th className="px-3 py-2">Registration ID</th>
+                            <th className="px-3 py-2">Team Name</th>
+                            <th className="px-3 py-2">Role</th>
+                            <th className="px-3 py-2">Name</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {regPreview.validRows.slice(0, 8).map((row, idx) => (
+                            <tr key={idx} className="hover:bg-slate-50/80">
+                              <td className="px-3 py-2 text-slate-400">{idx + 1}</td>
+                              <td className="px-3 py-2 font-bold text-teal-800">{row.registration_id}</td>
+                              <td className="px-3 py-2 text-slate-700">{row.team_name}</td>
+                              <td className="px-3 py-2">
+                                <span className="px-1.5 py-0.5 rounded text-[10px] bg-slate-100 text-slate-700 font-semibold border border-slate-200">
+                                  {row.role || "Member"}
+                                </span>
+                              </td>
+                              <td className="px-3 py-2 text-slate-900 font-medium">{row.member_name}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  {/* Action Confirmation Buttons */}
+                  <div className="pt-3 flex flex-wrap gap-3 justify-end items-center">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRegFile(null);
+                        setRegPreview(null);
+                        setRegError("");
+                      }}
+                      className="btn-secondary text-xs px-4 py-2"
+                    >
+                      Cancel &amp; Clear
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmReplaceModal(true)}
+                      className="btn-primary text-xs px-5 py-2.5 bg-red-600 hover:bg-red-700 border-red-700 shadow-sm"
+                    >
+                      Confirm &amp; Replace Registrations →
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </main>
+
+      {/* ── Confirm Registrations Replace Modal ── */}
+      {confirmReplaceModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs">
+          <div className="w-full max-w-md rounded-2xl p-6 sm:p-7 bg-white border border-slate-200 shadow-2xl space-y-4">
+            <div className="text-center">
+              <div className="w-12 h-12 rounded-full bg-amber-50 border border-amber-200 text-amber-600 flex items-center justify-center text-xl font-bold mx-auto mb-3">
+                ⚠️
+              </div>
+              <h3 className="font-heading font-bold text-lg text-slate-900">
+                Replace All Registrations?
+              </h3>
+              <p className="text-xs text-slate-600 mt-2 font-display leading-relaxed">
+                This will delete all existing rows in the <strong className="text-slate-900">&quot;registrations&quot;</strong> table and insert <strong>{regPreview?.validRows.length}</strong> new members across <strong>{regPreview?.teamCount}</strong> teams in a single transaction.
+              </p>
+              <div className="mt-3 p-3 rounded-lg bg-slate-50 border border-slate-200 text-[11px] font-mono text-slate-600 text-left">
+                ✓ Previous submissions and scores remain completely untouched.
+                <br />
+                ✓ Rollback automatically occurs if an error occurs.
+              </div>
+            </div>
+
+            <div className="flex gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setConfirmReplaceModal(false)}
+                disabled={uploadingReg}
+                className="btn-secondary flex-1 text-xs"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmReplace}
+                disabled={uploadingReg}
+                className="flex-1 py-2 rounded-lg bg-teal-700 hover:bg-teal-800 text-white font-mono text-xs font-bold transition-colors shadow-sm"
+              >
+                {uploadingReg ? "Replacing..." : "Yes, Replace All"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Export Modal ── */}
       {exportOpen && (

@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useMemo } from "react";
 import Link from "next/link";
+import { MAX_SCORE, TASK_POINTS, TOTAL_TASKS } from "@/lib/constants";
 
 interface Task {
   id: number;
@@ -13,7 +14,9 @@ interface Task {
 interface StartFormData {
   taskId: number;
   team_id: string;
+  team_name: string;
   member_name: string;
+  role: string;
   college_name: string;
 }
 
@@ -39,11 +42,24 @@ export default function HomePage() {
   const [formData, setFormData] = useState<StartFormData>({
     taskId: 0,
     team_id: "",
+    team_name: "",
     member_name: "",
+    role: "",
     college_name: "",
   });
   const [formError, setFormError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+
+  // Guided Team & Member Selection State
+  const [teamSearchInput, setTeamSearchInput] = useState("");
+  const [teamOptions, setTeamOptions] = useState<Array<{ registration_id: string; team_name: string }>>([]);
+  const [loadingTeams, setLoadingTeams] = useState(false);
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const [selectedTeam, setSelectedTeam] = useState<{ registration_id: string; team_name: string } | null>(null);
+  const [teamMembers, setTeamMembers] = useState<Array<{ member_name: string; role: string }>>([]);
+  const [loadingMembers, setLoadingMembers] = useState(false);
+  const [selectedMember, setSelectedMember] = useState<{ member_name: string; role: string } | null>(null);
+  const [manualMode, setManualMode] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [activeFaq, setActiveFaq] = useState<number | null>(null);
   const [galleryFilter, setGalleryFilter] = useState<"all" | "day1" | "day2">("all");
@@ -94,9 +110,30 @@ export default function HomePage() {
       setFormData((prev) => ({
         ...prev,
         team_id: cookies.team_id || "",
+        team_name: cookies.team_name || "",
         member_name: cookies.member_name || "",
+        role: cookies.member_role || "",
         college_name: cookies.college_name || "",
       }));
+
+      if (cookies.team_id) {
+        setSelectedTeam({
+          registration_id: cookies.team_id,
+          team_name: cookies.team_name || "",
+        });
+        setTeamSearchInput(
+          cookies.team_name
+            ? `${cookies.team_id} - ${cookies.team_name}`
+            : cookies.team_id
+        );
+      }
+
+      if (cookies.member_name) {
+        setSelectedMember({
+          member_name: cookies.member_name,
+          role: cookies.member_role || "Member",
+        });
+      }
     }
 
     fetch("/api/tasks")
@@ -111,6 +148,25 @@ export default function HomePage() {
       .catch(() => console.error("Failed to fetch leaderboard"))
       .finally(() => setLeaderboardLoading(false));
   }, []);
+
+  // Debounced search for teams dropdown
+  useEffect(() => {
+    if (!activeModal) return;
+    if (manualMode) return;
+
+    const timer = setTimeout(() => {
+      setLoadingTeams(true);
+      fetch(`/api/teams?q=${encodeURIComponent(teamSearchInput.trim())}`)
+        .then((res) => res.json())
+        .then((data) => {
+          setTeamOptions(data.teams || []);
+        })
+        .catch(() => setTeamOptions([]))
+        .finally(() => setLoadingTeams(false));
+    }, 200);
+
+    return () => clearTimeout(timer);
+  }, [teamSearchInput, activeModal, manualMode]);
 
   async function handleSearch(e: React.FormEvent) {
     e.preventDefault();
@@ -144,24 +200,81 @@ export default function HomePage() {
     setActiveModal(taskId);
     setFormData((prev) => ({ ...prev, taskId }));
     setFormError("");
+    setIsDropdownOpen(false);
+
+    // If already pre-filled from cookies, fetch members immediately
+    if (selectedTeam?.registration_id) {
+      setLoadingMembers(true);
+      fetch(`/api/teams/${encodeURIComponent(selectedTeam.registration_id)}/members`)
+        .then((res) => res.json())
+        .then((data) => setTeamMembers(data.members || []))
+        .catch(() => { })
+        .finally(() => setLoadingMembers(false));
+    }
+  }
+
+  function handleSelectTeam(team: { registration_id: string; team_name: string }) {
+    setSelectedTeam(team);
+    setTeamSearchInput(`${team.registration_id} - ${team.team_name}`);
+    setIsDropdownOpen(false);
+    setSelectedMember(null);
+    setLoadingMembers(true);
+    setFormError("");
+
+    fetch(`/api/teams/${encodeURIComponent(team.registration_id)}/members`)
+      .then((res) => res.json())
+      .then((data) => {
+        setTeamMembers(data.members || []);
+      })
+      .catch(() => {
+        setTeamMembers([]);
+        setFormError("Failed to load team members. Please try again.");
+      })
+      .finally(() => setLoadingMembers(false));
   }
 
   async function handleStart(e: React.FormEvent) {
     e.preventDefault();
     setFormError("");
 
-    const normalizedTeam = formData.team_id.trim().toUpperCase();
-    if (!normalizedTeam.startsWith("TRI")) {
-      setFormError('Team ID must start with "TRI" (e.g. TRI-01, TRI_WARRIORS)');
-      return;
-    }
-    if (!formData.member_name.trim()) {
-      setFormError("Please enter your full name");
-      return;
-    }
-    if (!formData.college_name.trim()) {
-      setFormError("Please enter your college name");
-      return;
+    let regId = "";
+    let tName = "";
+    let mName = "";
+    let role = "";
+    const colName = formData.college_name.trim();
+
+    if (!manualMode) {
+      if (!selectedTeam) {
+        setFormError("Please select your team from the dropdown search");
+        return;
+      }
+      if (!selectedMember) {
+        setFormError("Please select your name from the team members list");
+        return;
+      }
+      if (!colName) {
+        setFormError("Please enter your college name");
+        return;
+      }
+      regId = selectedTeam.registration_id.trim();
+      tName = selectedTeam.team_name.trim();
+      mName = selectedMember.member_name.trim();
+      role = selectedMember.role.trim();
+    } else {
+      regId = formData.team_id.trim();
+      mName = formData.member_name.trim();
+      if (!regId) {
+        setFormError("Please enter your Team / Registration ID");
+        return;
+      }
+      if (!mName) {
+        setFormError("Please enter your full name");
+        return;
+      }
+      if (!colName) {
+        setFormError("Please enter your college name");
+        return;
+      }
     }
 
     setSubmitting(true);
@@ -171,9 +284,12 @@ export default function HomePage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          team_id: normalizedTeam,
-          member_name: formData.member_name.trim(),
-          college_name: formData.college_name.trim(),
+          registration_id: regId,
+          team_id: regId,
+          team_name: tName,
+          member_name: mName,
+          role: role,
+          college_name: colName,
         }),
       });
 
@@ -409,12 +525,6 @@ export default function HomePage() {
 
           {/* Desktop Nav Links */}
           <div className="hidden lg:flex items-center gap-1">
-            <a href="#about" className="px-3.5 py-1.5 font-mono text-xs tracking-wider uppercase text-slate-600 hover:text-teal-700 hover:bg-slate-50 rounded-md transition-colors">
-              About
-            </a>
-            <a href="#tracks" className="px-3.5 py-1.5 font-mono text-xs tracking-wider uppercase text-slate-600 hover:text-teal-700 hover:bg-slate-50 rounded-md transition-colors">
-              Tracks
-            </a>
             <a href="#timeline" className="px-3.5 py-1.5 font-mono text-xs tracking-wider uppercase text-slate-600 hover:text-teal-700 hover:bg-slate-50 rounded-md transition-colors">
               Timeline
             </a>
@@ -423,12 +533,6 @@ export default function HomePage() {
             </a>
             <a href="#leaderboard" className="px-3.5 py-1.5 font-mono text-xs tracking-wider uppercase text-slate-600 hover:text-teal-700 hover:bg-slate-50 rounded-md transition-colors">
               Leaderboard
-            </a>
-            <a href="#gallery" className="px-3.5 py-1.5 font-mono text-xs tracking-wider uppercase text-slate-600 hover:text-teal-700 hover:bg-slate-50 rounded-md transition-colors">
-              Archive
-            </a>
-            <a href="#sponsors" className="px-3.5 py-1.5 font-mono text-xs tracking-wider uppercase text-slate-600 hover:text-teal-700 hover:bg-slate-50 rounded-md transition-colors">
-              Partners
             </a>
             <a href="#faq" className="px-3.5 py-1.5 font-mono text-xs tracking-wider uppercase text-slate-600 hover:text-teal-700 hover:bg-slate-50 rounded-md transition-colors">
               FAQ
@@ -611,133 +715,9 @@ export default function HomePage() {
               <div className="font-mono text-[11px] sm:text-xs uppercase tracking-wider text-slate-500 mt-1">Tri-City Hubs</div>
             </div>
             <div className="text-center">
-              <div className="font-heading font-bold text-2xl sm:text-3xl text-emerald-700">₹1,00,000+</div>
+              <div className="font-heading font-bold text-2xl sm:text-3xl text-emerald-700">₹50,000</div>
               <div className="font-mono text-[11px] sm:text-xs uppercase tracking-wider text-slate-500 mt-1">Grand Prizes</div>
             </div>
-          </div>
-        </div>
-      </section>
-
-      {/* ── Section 01: About & Tri-City Hubs ── */}
-      <section id="about" className="py-24 sm:py-32 px-4 sm:px-6 bg-slate-50/60 border-b border-slate-200">
-        <div className="max-w-6xl mx-auto">
-          <div className="flex items-center gap-3 mb-4">
-            <span className="font-mono text-xs tracking-[0.25em] uppercase text-teal-700 font-bold">01</span>
-            <span className="h-[1px] w-10 bg-teal-600/40" />
-            <span className="font-mono text-xs tracking-[0.25em] uppercase text-slate-500 font-medium">The Mission</span>
-          </div>
-
-          <h2 className="font-display font-extrabold text-3xl sm:text-4xl md:text-5xl text-slate-900 leading-tight mb-6">
-            Connecting Three Cities. <span className="text-teal-700">Igniting Tech Talent.</span>
-          </h2>
-
-          <p className="text-base sm:text-lg text-slate-600 max-w-3xl leading-relaxed mb-6 font-display">
-            The <strong className="text-slate-900 font-semibold">Tri-City Hackathon</strong> is an elite regional initiative spearheaded by Centle India Hyderabad. We connect student engineers, product designers, and inventors across <span className="text-slate-900 font-medium">Warangal</span>, <span className="text-slate-900 font-medium">Hanamkonda</span>, and <span className="text-slate-900 font-medium">Kazipet</span>.
-          </p>
-          <p className="text-base sm:text-lg text-slate-600 max-w-3xl leading-relaxed mb-14 font-display">
-            What makes it truly &quot;Tri-City&quot; is the synergy of our region: the academic strength of premier universities, the rich cultural heritage of Warangal, and the engineering dynamism of Kazipet. Teams tackle real-world problem statements, build software prototypes, and submit tasks on this portal.
-          </p>
-
-          {/* Three City Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="pro-card rounded-2xl p-8 flex flex-col justify-between">
-              <div>
-                <div className="inline-block px-3 py-1 rounded-md text-[11px] font-mono font-semibold tracking-wide uppercase bg-teal-50 text-teal-700 border border-teal-100 mb-4">
-                  Historical &amp; Cultural Capital
-                </div>
-                <h3 className="font-heading font-bold text-2xl text-slate-900 mb-3">Warangal</h3>
-                <p className="text-sm text-slate-600 leading-relaxed font-display">
-                  The historic heart of Kakatiya legacy, bringing together passionate engineers, innovative thinkers, and researchers building with grit and heritage.
-                </p>
-              </div>
-              <div className="pt-6 mt-6 border-t border-slate-100 flex items-center justify-between text-xs font-mono text-slate-500">
-                <span>Telangana</span>
-                <span className="text-teal-700 font-bold">Tri-City Hub 01</span>
-              </div>
-            </div>
-
-            <div className="pro-card rounded-2xl p-8 flex flex-col justify-between">
-              <div>
-                <div className="inline-block px-3 py-1 rounded-md text-[11px] font-mono font-semibold tracking-wide uppercase bg-teal-50 text-teal-700 border border-teal-100 mb-4">
-                  Education &amp; Commercial Hub
-                </div>
-                <h3 className="font-heading font-bold text-2xl text-slate-900 mb-3">Hanamkonda</h3>
-                <p className="text-sm text-slate-600 leading-relaxed font-display">
-                  The educational powerhouse with premier institutes fostering young minds in deep tech, artificial intelligence, software architecture, and modern UX design.
-                </p>
-              </div>
-              <div className="pt-6 mt-6 border-t border-slate-100 flex items-center justify-between text-xs font-mono text-slate-500">
-                <span>Telangana</span>
-                <span className="text-teal-700 font-bold">Tri-City Hub 02</span>
-              </div>
-            </div>
-
-            <div className="pro-card rounded-2xl p-8 flex flex-col justify-between">
-              <div>
-                <div className="inline-block px-3 py-1 rounded-md text-[11px] font-mono font-semibold tracking-wide uppercase bg-teal-50 text-teal-700 border border-teal-100 mb-4">
-                  Connectivity &amp; Logistics Core
-                </div>
-                <h3 className="font-heading font-bold text-2xl text-slate-900 mb-3">Kazipet</h3>
-                <p className="text-sm text-slate-600 leading-relaxed font-display">
-                  The strategic junction connecting Telangana to the nation, symbolizing infrastructure, high-throughput systems, networking integration, and industrial IoT.
-                </p>
-              </div>
-              <div className="pt-6 mt-6 border-t border-slate-100 flex items-center justify-between text-xs font-mono text-slate-500">
-                <span>Telangana</span>
-                <span className="text-teal-700 font-bold">Tri-City Hub 03</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* ── Section 02: Tracks ── */}
-      <section id="tracks" className="py-24 sm:py-32 px-4 sm:px-6 bg-white border-b border-slate-200">
-        <div className="max-w-6xl mx-auto">
-          <div className="flex items-center gap-3 mb-4">
-            <span className="font-mono text-xs tracking-[0.25em] uppercase text-teal-700 font-bold">02</span>
-            <span className="h-[1px] w-10 bg-teal-600/40" />
-            <span className="font-mono text-xs tracking-[0.25em] uppercase text-slate-500 font-medium">Problem Statements</span>
-          </div>
-
-          <h2 className="font-display font-extrabold text-3xl sm:text-4xl md:text-5xl text-slate-900 leading-tight mb-4">
-            Hackathon Challenge Tracks
-          </h2>
-          <p className="text-base sm:text-lg text-slate-600 max-w-2xl leading-relaxed mb-14 font-display">
-            Select one of the challenge areas below to build your solution. Teams can innovate across web applications, intelligent agents, and scalable backends.
-          </p>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-            {problemTracks.map((track) => (
-              <div
-                key={track.id}
-                className="pro-card rounded-2xl p-7 flex flex-col justify-between min-h-[240px] hover:border-teal-600/60"
-              >
-                <div>
-                  <div className="flex items-center justify-between mb-4">
-                    <span className="font-mono text-xs font-bold tracking-widest text-teal-700 uppercase">
-                      Track {track.id}
-                    </span>
-                    <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-mono font-medium ${track.color}`}>
-                      {track.category}
-                    </span>
-                  </div>
-                  <h3 className="font-heading font-bold text-xl text-slate-900 mb-2.5">
-                    {track.title}
-                  </h3>
-                  <p className="text-sm text-slate-600 leading-relaxed font-display">
-                    {track.description}
-                  </p>
-                </div>
-                <div className="pt-4 mt-6 border-t border-slate-100 flex items-center justify-between text-xs font-mono text-slate-500">
-                  <span className="flex items-center gap-1.5">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                    Open for Submission
-                  </span>
-                  <span className="text-teal-700 font-semibold">Ready</span>
-                </div>
-              </div>
-            ))}
           </div>
         </div>
       </section>
@@ -755,7 +735,7 @@ export default function HomePage() {
                 Daily Tasks &amp; Challenges
               </h2>
               <p className="text-base text-slate-600 max-w-xl mt-3 font-display">
-                Click any active task to enter your Team ID and name. Submit your answer and link to earn up to 100 points per challenge.
+                Click any active task to enter your Team ID and name. Submit your answer and link to earn up to {TASK_POINTS} points per challenge.
               </p>
             </div>
 
@@ -798,9 +778,8 @@ export default function HomePage() {
               {tasks.map((task) => (
                 <div
                   key={task.id}
-                  className={`pro-card rounded-2xl p-7 flex flex-col justify-between bg-white relative overflow-hidden transition-all duration-300 ${
-                    task.is_active ? "hover:border-teal-600 shadow-xs" : "opacity-75 bg-slate-50"
-                  }`}
+                  className={`pro-card rounded-2xl p-7 flex flex-col justify-between bg-white relative overflow-hidden transition-all duration-300 ${task.is_active ? "hover:border-teal-600 shadow-xs" : "opacity-75 bg-slate-50"
+                    }`}
                 >
                   {/* Active highlight top bar */}
                   {task.is_active && (
@@ -878,7 +857,7 @@ export default function HomePage() {
             Live Leaderboard
           </h2>
           <p className="text-base text-slate-600 max-w-2xl leading-relaxed mb-10 font-display">
-            Rankings updated dynamically based on submitted scores across all 5 hackathon tasks. Maximum 500 total points possible.
+            Rankings updated dynamically based on submitted scores across all {TOTAL_TASKS} hackathon tasks. Maximum {MAX_SCORE} total points possible.
           </p>
 
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
@@ -922,9 +901,8 @@ export default function HomePage() {
                         >
                           <div className="flex items-center gap-3.5">
                             <span
-                              className={`w-7 h-7 rounded-md font-mono text-xs font-bold flex items-center justify-center border ${
-                                medalColors[idx] || "bg-slate-50 text-slate-600 border-slate-200"
-                              }`}
+                              className={`w-7 h-7 rounded-md font-mono text-xs font-bold flex items-center justify-center border ${medalColors[idx] || "bg-slate-50 text-slate-600 border-slate-200"
+                                }`}
                             >
                               #{idx + 1}
                             </span>
@@ -940,10 +918,10 @@ export default function HomePage() {
 
                           <div className="text-right">
                             <div className="font-mono text-base font-bold text-teal-700">
-                              {team.avg_score != null ? `${team.avg_score.toFixed(1)} pts` : "—"}
+                              {team.total_score != null ? `${team.total_score} / ${MAX_SCORE}` : "—"}
                             </div>
                             <div className="font-mono text-[11px] text-slate-400">
-                              Total: {team.total_score}
+                              {team.tasks_scored} of {TOTAL_TASKS} scored
                             </div>
                           </div>
                         </div>
@@ -1014,15 +992,15 @@ export default function HomePage() {
 
                   <div className="grid grid-cols-2 gap-3 text-center">
                     <div className="p-3 rounded-lg bg-white border border-slate-200">
-                      <div className="font-mono text-[10px] text-slate-400 uppercase">Average Score</div>
+                      <div className="font-mono text-[10px] text-slate-400 uppercase">Avg Per Task</div>
                       <div className="font-mono text-base font-bold text-slate-900 mt-0.5">
-                        {searchResult.avg_score != null ? `${searchResult.avg_score.toFixed(1)}%` : "N/A"}
+                        {searchResult.avg_score != null ? `${searchResult.avg_score.toFixed(1)} / ${TASK_POINTS}` : "N/A"}
                       </div>
                     </div>
                     <div className="p-3 rounded-lg bg-white border border-slate-200">
                       <div className="font-mono text-[10px] text-slate-400 uppercase">Total Score</div>
                       <div className="font-mono text-base font-bold text-emerald-700 mt-0.5">
-                        {searchResult.total_score} / 500
+                        {searchResult.total_score} / {MAX_SCORE}
                       </div>
                     </div>
                   </div>
@@ -1075,9 +1053,8 @@ export default function HomePage() {
                 return (
                   <div
                     key={idx}
-                    className={`relative flex items-center gap-6 md:gap-0 ${
-                      isEven ? "md:flex-row" : "md:flex-row-reverse"
-                    }`}
+                    className={`relative flex items-center gap-6 md:gap-0 ${isEven ? "md:flex-row" : "md:flex-row-reverse"
+                      }`}
                   >
                     {/* Content Box */}
                     <div className={`flex-1 ${isEven ? "md:pr-12 md:text-right" : "md:pl-12 md:text-left"}`}>
@@ -1112,170 +1089,6 @@ export default function HomePage() {
                   </div>
                 );
               })}
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* ── Section 04: Visual Archive / Gallery ── */}
-      <section id="gallery" className="py-24 sm:py-32 px-4 sm:px-6 bg-white border-b border-slate-200">
-        <div className="max-w-6xl mx-auto">
-          <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-12">
-            <div>
-              <div className="flex items-center gap-3 mb-4">
-                <span className="font-mono text-xs tracking-[0.25em] uppercase text-teal-700 font-bold">05</span>
-                <span className="h-[1px] w-10 bg-teal-600/40" />
-                <span className="font-mono text-xs tracking-[0.25em] uppercase text-slate-500 font-medium">Visual Archive</span>
-              </div>
-              <h2 className="font-display font-extrabold text-3xl sm:text-4xl md:text-5xl text-slate-900 leading-tight mb-2">
-                Event Gallery &amp; Moments
-              </h2>
-              <p className="text-base text-slate-600 max-w-xl font-display">
-                Curated highlights capturing the adrenaline, teamwork, and late-night breakthroughs of the 24-hour sprint.
-              </p>
-            </div>
-
-            {/* Filter buttons */}
-            <div className="inline-flex rounded-xl bg-slate-100 p-1 border border-slate-200">
-              <button
-                onClick={() => setGalleryFilter("all")}
-                className={`px-4 py-1.5 rounded-lg font-mono text-xs font-semibold tracking-wider transition-all ${
-                  galleryFilter === "all"
-                    ? "bg-white text-slate-900 shadow-xs border border-slate-200"
-                    : "text-slate-500 hover:text-slate-900"
-                }`}
-              >
-                All
-              </button>
-              <button
-                onClick={() => setGalleryFilter("day1")}
-                className={`px-4 py-1.5 rounded-lg font-mono text-xs font-semibold tracking-wider transition-all ${
-                  galleryFilter === "day1"
-                    ? "bg-white text-slate-900 shadow-xs border border-slate-200"
-                    : "text-slate-500 hover:text-slate-900"
-                }`}
-              >
-                Day 1
-              </button>
-              <button
-                onClick={() => setGalleryFilter("day2")}
-                className={`px-4 py-1.5 rounded-lg font-mono text-xs font-semibold tracking-wider transition-all ${
-                  galleryFilter === "day2"
-                    ? "bg-white text-slate-900 shadow-xs border border-slate-200"
-                    : "text-slate-500 hover:text-slate-900"
-                }`}
-              >
-                Day 2
-              </button>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {filteredGallery.map((item) => (
-              <div
-                key={item.id}
-                className="pro-card rounded-2xl p-7 flex flex-col justify-between bg-slate-50/50 hover:bg-white min-h-[220px]"
-              >
-                <div>
-                  <div className="flex items-center justify-between mb-4">
-                    <span className="w-10 h-10 rounded-xl bg-teal-50 border border-teal-100 flex items-center justify-center text-lg">
-                      {item.icon}
-                    </span>
-                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold uppercase bg-white border border-slate-200 text-slate-600">
-                      {item.tag}
-                    </span>
-                  </div>
-                  <h3 className="font-heading font-bold text-xl text-slate-900 mb-2">
-                    {item.title}
-                  </h3>
-                  <p className="text-sm text-slate-600 font-display leading-relaxed">
-                    {item.desc}
-                  </p>
-                </div>
-                <div className="pt-4 mt-6 border-t border-slate-100 flex items-center justify-between text-xs font-mono text-slate-400">
-                  <span>Centle India</span>
-                  <span className="text-teal-700 font-medium">Archive #0{item.id}</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* ── Section 05: Partners & Sponsors ── */}
-      <section id="sponsors" className="py-24 sm:py-32 px-4 sm:px-6 bg-slate-50/60 border-b border-slate-200 overflow-hidden">
-        <div className="max-w-6xl mx-auto text-center mb-16">
-          <div className="flex items-center justify-center gap-3 mb-4">
-            <span className="font-mono text-xs tracking-[0.25em] uppercase text-teal-700 font-bold">06</span>
-            <span className="h-[1px] w-10 bg-teal-600/40" />
-            <span className="font-mono text-xs tracking-[0.25em] uppercase text-slate-500 font-medium">Partners</span>
-          </div>
-
-          <h2 className="font-display font-extrabold text-3xl sm:text-4xl md:text-5xl text-slate-900 leading-tight mb-4">
-            Supported By Regional Industry
-          </h2>
-          <p className="text-base text-slate-600 max-w-2xl mx-auto font-display">
-            Ecosystem partners, enterprise tech firms, and regional leaders empowering student developers across Warangal, Hanamkonda, and Kazipet.
-          </p>
-        </div>
-
-        {/* Tier Grid */}
-        <div className="max-w-5xl mx-auto space-y-10 mb-16">
-          {/* Platinum */}
-          <div>
-            <p className="font-mono text-xs tracking-widest uppercase text-slate-400 mb-4 text-center font-bold">
-              Platinum Sponsors
-            </p>
-            <div className="flex flex-wrap justify-center gap-4">
-              {partners
-                .filter((p) => p.tier === "Platinum")
-                .map((p, idx) => (
-                  <div
-                    key={idx}
-                    className="w-48 h-18 flex items-center justify-center rounded-xl bg-white border border-slate-200 shadow-2xs hover:border-teal-500 hover:shadow-sm transition-all"
-                  >
-                    <span className="font-heading font-bold text-base text-slate-800 tracking-wider">
-                      {p.name}
-                    </span>
-                  </div>
-                ))}
-            </div>
-          </div>
-
-          {/* Gold */}
-          <div>
-            <p className="font-mono text-xs tracking-widest uppercase text-slate-400 mb-4 text-center font-bold">
-              Gold Sponsors
-            </p>
-            <div className="flex flex-wrap justify-center gap-3">
-              {partners
-                .filter((p) => p.tier === "Gold")
-                .map((p, idx) => (
-                  <div
-                    key={idx}
-                    className="w-40 h-14 flex items-center justify-center rounded-xl bg-white border border-slate-200 shadow-2xs hover:border-slate-400 transition-all"
-                  >
-                    <span className="font-heading font-semibold text-sm text-slate-700 tracking-wider">
-                      {p.name}
-                    </span>
-                  </div>
-                ))}
-            </div>
-          </div>
-        </div>
-
-        {/* Marquee Banner */}
-        <div className="relative py-4 border-y border-slate-200 bg-white">
-          <div className="marquee-container">
-            <div className="marquee-content">
-              {partners.concat(partners).map((partner, idx) => (
-                <div key={idx} className="mx-8 flex items-center gap-3 shrink-0">
-                  <span className="w-1.5 h-1.5 rounded-full bg-teal-600" />
-                  <span className="font-heading font-bold text-sm tracking-wider uppercase text-slate-500 hover:text-slate-900 transition-colors">
-                    {partner.name}
-                  </span>
-                </div>
-              ))}
             </div>
           </div>
         </div>
@@ -1400,52 +1213,207 @@ export default function HomePage() {
               TASK #{formData.taskId}
             </div>
 
-            <h3 className="font-heading font-bold text-xl text-slate-900 mb-2">
-              Start Challenge Submission
+            <h3 className="font-heading font-bold text-xl text-slate-900 mb-1">
+              Select Your Team &amp; Participant
             </h3>
-            <p className="text-xs text-slate-600 mb-6 font-display leading-relaxed">
-              Enter your Team ID, Member Name, and College Name. Cookies will save your credentials so you won&apos;t need to re-enter them for other tasks.
+            <p className="text-xs text-slate-600 mb-5 font-display leading-relaxed">
+              Find your registered team, select your name, and enter your college to start task #{formData.taskId}.
             </p>
 
             <form onSubmit={handleStart} className="space-y-4">
+              {/* Step 1: Searchable Team Dropdown */}
               <div>
-                <label className="block text-xs font-mono font-semibold uppercase text-slate-700 mb-1.5">
-                  Team ID <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. TRI-01 or TRI_ALPHA"
-                  value={formData.team_id}
-                  onChange={(e) =>
-                    setFormData((prev) => ({ ...prev, team_id: e.target.value.toUpperCase() }))
-                  }
-                  className="input-field text-xs uppercase font-mono"
-                />
-                <p className="text-[11px] font-mono text-slate-500 mt-1">
-                  Format: Must start with <strong className="text-teal-700 font-bold">TRI</strong> (e.g. TRI-01, TRI_DEV). Auto-capitalizes.
-                </p>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-xs font-mono font-semibold uppercase text-slate-700">
+                    Step 1: Select Team <span className="text-red-500">*</span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setManualMode(!manualMode);
+                      setFormError("");
+                    }}
+                    className="text-[11px] font-mono text-teal-700 hover:text-teal-900 underline cursor-pointer"
+                  >
+                    {manualMode ? "← Use Dropdown Search" : "Manual ID Entry"}
+                  </button>
+                </div>
+
+                {!manualMode ? (
+                  <div className="relative">
+                    <div className="relative">
+                      <input
+                        type="text"
+                        placeholder="Search Registration ID or Team Name (e.g. TRI26004 or Ruhan)..."
+                        value={teamSearchInput}
+                        onChange={(e) => {
+                          setTeamSearchInput(e.target.value);
+                          setIsDropdownOpen(true);
+                          if (selectedTeam) {
+                            setSelectedTeam(null);
+                            setSelectedMember(null);
+                            setTeamMembers([]);
+                          }
+                        }}
+                        onFocus={() => setIsDropdownOpen(true)}
+                        className="input-field text-xs pr-9"
+                      />
+                      {loadingTeams && (
+                        <div className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 border-2 border-teal-600 border-t-transparent rounded-full animate-spin" />
+                      )}
+                    </div>
+
+                    {/* Live Search Results Dropdown */}
+                    {isDropdownOpen && (
+                      <div className="absolute z-50 left-0 right-0 mt-1 max-h-52 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-xl py-1 divide-y divide-slate-100">
+                        {teamOptions.length > 0 ? (
+                          teamOptions.map((t) => (
+                            <button
+                              key={t.registration_id}
+                              type="button"
+                              onClick={() => handleSelectTeam(t)}
+                              className="w-full text-left px-3.5 py-2.5 hover:bg-teal-50 transition-colors flex items-center justify-between group"
+                            >
+                              <div>
+                                <span className="font-mono font-bold text-xs text-teal-800 group-hover:text-teal-900 block">
+                                  {t.registration_id} - {t.team_name}
+                                </span>
+                              </div>
+                              <span className="text-[10px] font-mono font-semibold text-slate-400 group-hover:text-teal-700">
+                                Select →
+                              </span>
+                            </button>
+                          ))
+                        ) : (
+                          <div className="p-3 text-center text-xs font-mono text-slate-400">
+                            {loadingTeams
+                              ? "Searching teams..."
+                              : "No registered teams found. Type to search or use manual entry."}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {selectedTeam && (
+                      <div className="mt-2 p-2 rounded-lg bg-teal-50/80 border border-teal-200/80 flex items-center justify-between text-xs font-mono text-teal-900">
+                        <span>
+                          Team: <strong>{selectedTeam.registration_id} - {selectedTeam.team_name}</strong>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedTeam(null);
+                            setSelectedMember(null);
+                            setTeamMembers([]);
+                            setTeamSearchInput("");
+                            setIsDropdownOpen(true);
+                          }}
+                          className="text-[10px] text-teal-700 hover:text-teal-950 font-bold ml-2 underline"
+                        >
+                          Change
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div>
+                    <input
+                      type="text"
+                      placeholder="e.g. TRI-01 or TRI26004"
+                      value={formData.team_id}
+                      onChange={(e) =>
+                        setFormData((prev) => ({ ...prev, team_id: e.target.value.toUpperCase() }))
+                      }
+                      className="input-field text-xs uppercase font-mono"
+                    />
+                    <p className="text-[11px] font-mono text-slate-500 mt-1">
+                      Enter your registration or team identifier.
+                    </p>
+                  </div>
+                )}
               </div>
 
-              <div>
-                <label className="block text-xs font-mono font-semibold uppercase text-slate-700 mb-1.5">
-                  Your Full Name <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. Rahul Sharma"
-                  value={formData.member_name}
-                  onChange={(e) =>
-                    setFormData((prev) => ({ ...prev, member_name: e.target.value }))
-                  }
-                  className="input-field text-xs"
-                />
-              </div>
+              {/* Step 2 & 3: Member Selection (name + role) */}
+              {!manualMode && selectedTeam && (
+                <div>
+                  <label className="block text-xs font-mono font-semibold uppercase text-slate-700 mb-1.5">
+                    Step 2: Select Your Name <span className="text-red-500">*</span>
+                  </label>
 
+                  {loadingMembers ? (
+                    <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-mono text-slate-500 flex items-center gap-2">
+                      <div className="w-3.5 h-3.5 border-2 border-teal-600 border-t-transparent rounded-full animate-spin" />
+                      Loading team members...
+                    </div>
+                  ) : teamMembers.length > 0 ? (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {teamMembers.map((m, idx) => {
+                        // Identify member by (registration_id, role)
+                        const isSelected =
+                          selectedMember?.role.toLowerCase() === m.role.toLowerCase() &&
+                          selectedMember?.member_name.toLowerCase() === m.member_name.toLowerCase();
+
+                        return (
+                          <button
+                            key={`${m.member_name}-${m.role}-${idx}`}
+                            type="button"
+                            onClick={() => setSelectedMember(m)}
+                            className={`p-2.5 rounded-xl border text-left transition-all flex items-center justify-between cursor-pointer ${isSelected
+                              ? "border-teal-600 bg-teal-50/90 ring-2 ring-teal-500/20 shadow-xs"
+                              : "border-slate-200 hover:border-slate-300 hover:bg-slate-50 bg-white"
+                              }`}
+                          >
+                            <div>
+                              <div className="text-xs font-bold text-slate-900">
+                                {m.member_name}
+                              </div>
+                              <div className="text-[10px] font-mono font-semibold text-teal-700 mt-0.5">
+                                {m.role || "Member"}
+                              </div>
+                            </div>
+                            <div
+                              className={`w-4 h-4 rounded-full border flex items-center justify-center text-[10px] ${isSelected
+                                ? "border-teal-600 bg-teal-600 text-white font-bold"
+                                : "border-slate-300 bg-white"
+                                }`}
+                            >
+                              {isSelected ? "✓" : ""}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-xs font-mono text-amber-800">
+                      No members registered under this team ID yet.
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Manual Mode Member Name Input */}
+              {manualMode && (
+                <div>
+                  <label className="block text-xs font-mono font-semibold uppercase text-slate-700 mb-1.5">
+                    Your Full Name <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. Rahul Sharma"
+                    value={formData.member_name}
+                    onChange={(e) =>
+                      setFormData((prev) => ({ ...prev, member_name: e.target.value }))
+                    }
+                    className="input-field text-xs"
+                  />
+                </div>
+              )}
+
+              {/* Step 4: College / Institution Name */}
               <div>
                 <label className="block text-xs font-mono font-semibold uppercase text-slate-700 mb-1.5">
-                  College / Institution Name <span className="text-red-500">*</span>
+                  Step 3: College / Institution Name <span className="text-red-500">*</span>
                 </label>
                 <input
                   type="text"
@@ -1468,7 +1436,10 @@ export default function HomePage() {
               <div className="pt-2 flex gap-3">
                 <button
                   type="button"
-                  onClick={() => setActiveModal(null)}
+                  onClick={() => {
+                    setActiveModal(null);
+                    setIsDropdownOpen(false);
+                  }}
                   className="btn-secondary flex-1 text-xs"
                 >
                   Cancel

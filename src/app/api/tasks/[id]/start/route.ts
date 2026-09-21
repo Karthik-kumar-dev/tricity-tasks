@@ -14,25 +14,23 @@ export async function POST(
   }
 
   const body = await request.json();
-  const { team_id, member_name, college_name } = body;
+  const rawTeamId = (body.registration_id || body.team_id || "") as string;
+  const rawMemberName = (body.member_name || "") as string;
+  const rawCollegeName = (body.college_name || "") as string;
+  const rawTeamName = (body.team_name || "") as string;
+  const rawRole = (body.role || "") as string;
 
-  if (!team_id || typeof team_id !== "string" || team_id.trim().length === 0) {
-    return NextResponse.json({ error: "Team ID is required" }, { status: 400 });
+  if (!rawTeamId || typeof rawTeamId !== "string" || rawTeamId.trim().length === 0) {
+    return NextResponse.json({ error: "Registration / Team ID is required" }, { status: 400 });
   }
 
-  const normalizedTeamId = team_id.trim().toUpperCase();
-  if (!normalizedTeamId.startsWith("TRI")) {
-    return NextResponse.json(
-      { error: 'Team ID must start with "TRI" (e.g. TRI-01, TRI_WARRIORS)' },
-      { status: 400 }
-    );
-  }
+  const normalizedTeamId = rawTeamId.trim().toUpperCase();
 
-  if (!member_name || typeof member_name !== "string" || member_name.trim().length === 0) {
+  if (!rawMemberName || typeof rawMemberName !== "string" || rawMemberName.trim().length === 0) {
     return NextResponse.json({ error: "Your name is required" }, { status: 400 });
   }
 
-  if (!college_name || typeof college_name !== "string" || college_name.trim().length === 0) {
+  if (!rawCollegeName || typeof rawCollegeName !== "string" || rawCollegeName.trim().length === 0) {
     return NextResponse.json({ error: "College name is required" }, { status: 400 });
   }
 
@@ -41,18 +39,26 @@ export async function POST(
   // Check task exists and is active
   let { data: task, error: taskError } = await supabase
     .from("tasks")
-    .select("id, title, description, is_active, rules, linkedin_template")
+    .select("id, title, description, is_active, rules, linkedin_template, instagram_template")
     .eq("id", taskId)
     .single();
 
-  // Fallback if rules or linkedin_template columns do not exist yet in Supabase
-  if (taskError && (taskError.code === "42703" || taskError.message?.includes("rules") || taskError.message?.includes("linkedin_template"))) {
+  // Fallback if rules, linkedin_template, or instagram_template columns do not exist yet in Supabase
+  if (
+    taskError &&
+    (taskError.code === "42703" ||
+      taskError.message?.includes("rules") ||
+      taskError.message?.includes("linkedin_template") ||
+      taskError.message?.includes("instagram_template"))
+  ) {
     const retry = await supabase
       .from("tasks")
       .select("id, title, description, is_active")
       .eq("id", taskId)
       .single();
-    task = retry.data ? { ...retry.data, rules: null, linkedin_template: null } : null;
+    task = retry.data
+      ? { ...retry.data, rules: null, linkedin_template: null, instagram_template: null }
+      : null;
     taskError = retry.error;
   }
 
@@ -65,9 +71,9 @@ export async function POST(
   }
 
   const trimmedTeamId = normalizedTeamId;
-  const trimmedName = member_name.trim();
+  const trimmedName = rawMemberName.trim();
   const normalizedName = trimmedName.toLowerCase();
-  const trimmedCollege = college_name.trim();
+  const trimmedCollege = rawCollegeName.trim();
 
   // Check if already submitted
   const { data: existing } = await supabase
@@ -85,11 +91,25 @@ export async function POST(
     maxAge: 60 * 60 * 24 * 7,
     sameSite: "lax",
   });
+  if (rawTeamName.trim()) {
+    cookieStore.set("team_name", rawTeamName.trim(), {
+      path: "/",
+      maxAge: 60 * 60 * 24 * 7,
+      sameSite: "lax",
+    });
+  }
   cookieStore.set("member_name", trimmedName, {
     path: "/",
     maxAge: 60 * 60 * 24 * 7,
     sameSite: "lax",
   });
+  if (rawRole.trim()) {
+    cookieStore.set("member_role", rawRole.trim(), {
+      path: "/",
+      maxAge: 60 * 60 * 24 * 7,
+      sameSite: "lax",
+    });
+  }
   cookieStore.set("college_name", trimmedCollege, {
     path: "/",
     maxAge: 60 * 60 * 24 * 7,
@@ -100,6 +120,7 @@ export async function POST(
     id: task.id,
     rules: task.rules,
     linkedin_template: task.linkedin_template,
+    instagram_template: task.instagram_template,
   });
 
   return NextResponse.json({
@@ -109,6 +130,7 @@ export async function POST(
       description: task.description,
       rules: resolved.rules,
       linkedin_template: resolved.linkedin_template,
+      instagram_template: resolved.instagram_template,
     },
     already_submitted: !!existing,
   });

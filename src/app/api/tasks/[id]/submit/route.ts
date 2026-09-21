@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabase } from "@/lib/supabase-server";
 
-// Task 1 ("Share Your Registration Poster") accepts a LinkedIn post URL only.
+// Task 1 ("Share Your Registration Poster") requires both Instagram and LinkedIn post URLs.
 const POSTER_TASK_ID = 1;
 
-// A valid public LinkedIn share link. Two accepted shapes from the spec:
+// Accepted LinkedIn shapes:
 //   https://www.linkedin.com/posts/...   (post permalink)
 //   https://www.linkedin.com/feed/update/... (feed activity update)
 const LINKEDIN_URL_RE =
@@ -12,6 +12,17 @@ const LINKEDIN_URL_RE =
 
 function isLinkedInUrl(value: string): boolean {
   return LINKEDIN_URL_RE.test(value.trim());
+}
+
+// Accepted Instagram shapes:
+//   https://www.instagram.com/p/...
+//   https://www.instagram.com/reel/...
+//   https://www.instagram.com/...
+const INSTAGRAM_URL_RE =
+  /^https:\/\/(www\.)?instagram\.com\/[a-zA-Z0-9_\-\.\/]+/i;
+
+function isInstagramUrl(value: string): boolean {
+  return INSTAGRAM_URL_RE.test(value.trim());
 }
 
 export async function POST(
@@ -25,7 +36,15 @@ export async function POST(
   }
 
   const body = await request.json();
-  const { team_id, member_name, college_name, answer, link } = body;
+  const {
+    team_id,
+    member_name,
+    college_name,
+    answer,
+    link,
+    instagram_url,
+    linkedin_url,
+  } = body;
 
   if (!team_id || typeof team_id !== "string" || team_id.trim().length === 0) {
     return NextResponse.json({ error: "Team ID is required" }, { status: 400 });
@@ -45,29 +64,55 @@ export async function POST(
 
   const isPosterTask = taskId === POSTER_TASK_ID;
   const answerStr = answer && typeof answer === "string" ? answer.trim() : "";
-  const linkStr = link && typeof link === "string" ? link.trim() : "";
+  let linkStr = link && typeof link === "string" ? link.trim() : "";
 
-  if (!answerStr && !linkStr) {
-    return NextResponse.json({ error: "An answer or link is required" }, { status: 400 });
-  }
+  let instaUrl = (instagram_url && typeof instagram_url === "string" ? instagram_url.trim() : "");
+  let linkedUrl = (linkedin_url && typeof linkedin_url === "string" ? linkedin_url.trim() : "");
 
-  if (isPosterTask && !linkStr) {
-    return NextResponse.json(
-      { error: "A LinkedIn post URL is required for this task" },
-      { status: 400 }
-    );
-  }
+  if (isPosterTask) {
+    if (!instaUrl && linkStr && isInstagramUrl(linkStr)) {
+      instaUrl = linkStr;
+    }
+    if (!linkedUrl && linkStr && isLinkedInUrl(linkStr)) {
+      linkedUrl = linkStr;
+    }
 
-  if (linkStr) {
-    const isLinkedIn = isLinkedInUrl(linkStr);
-    if (isPosterTask && !isLinkedIn) {
+    if (!instaUrl) {
+      return NextResponse.json(
+        { error: "Instagram post URL is required for Task 1" },
+        { status: 400 }
+      );
+    }
+    if (!isInstagramUrl(instaUrl)) {
       return NextResponse.json(
         {
           error:
-            "Please paste a valid public LinkedIn post URL, e.g. https://www.linkedin.com/posts/... or https://www.linkedin.com/feed/update/...",
+            "Please paste a valid public Instagram post or reel URL (e.g. https://www.instagram.com/p/... or https://www.instagram.com/reel/...)",
         },
         { status: 400 }
       );
+    }
+
+    if (!linkedUrl) {
+      return NextResponse.json(
+        { error: "LinkedIn post URL is required for Task 1" },
+        { status: 400 }
+      );
+    }
+    if (!isLinkedInUrl(linkedUrl)) {
+      return NextResponse.json(
+        {
+          error:
+            "Please paste a valid public LinkedIn post URL (e.g. https://www.linkedin.com/posts/... or https://www.linkedin.com/feed/update/...)",
+        },
+        { status: 400 }
+      );
+    }
+
+    linkStr = instaUrl;
+  } else {
+    if (!answerStr && !linkStr) {
+      return NextResponse.json({ error: "An answer or link is required" }, { status: 400 });
     }
   }
 
@@ -90,8 +135,9 @@ export async function POST(
       ? college_name.trim()
       : null;
 
-  const finalAnswer =
-    answerStr || (isPosterTask ? "Shared registration poster on LinkedIn" : "");
+  const finalAnswer = isPosterTask
+    ? `Instagram: ${instaUrl}\nLinkedIn: ${linkedUrl}`
+    : answerStr;
 
   const payload: Record<string, unknown> = {
     team_id: trimmedTeamId,

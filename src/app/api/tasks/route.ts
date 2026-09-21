@@ -9,16 +9,27 @@ export async function GET() {
 
   let { data: tasks, error } = await supabase
     .from("tasks")
-    .select("id, title, description, is_active, rules, linkedin_template")
+    .select("id, title, description, is_active, rules, linkedin_template, instagram_template")
     .order("id", { ascending: true });
 
-  // Fallback if rules or linkedin_template columns do not exist yet in Supabase
-  if (error && (error.code === "42703" || error.message?.includes("rules") || error.message?.includes("linkedin_template"))) {
+  // Fallback if rules, linkedin_template, or instagram_template columns do not exist yet in Supabase
+  if (
+    error &&
+    (error.code === "42703" ||
+      error.message?.includes("rules") ||
+      error.message?.includes("linkedin_template") ||
+      error.message?.includes("instagram_template"))
+  ) {
     const retry = await supabase
       .from("tasks")
       .select("id, title, description, is_active")
       .order("id", { ascending: true });
-    tasks = (retry.data || []).map((t) => ({ ...t, rules: null, linkedin_template: null }));
+    tasks = (retry.data || []).map((t) => ({
+      ...t,
+      rules: null,
+      linkedin_template: null,
+      instagram_template: null,
+    }));
     error = retry.error;
   }
 
@@ -32,6 +43,7 @@ export async function GET() {
       ...t,
       rules: resolved.rules,
       linkedin_template: resolved.linkedin_template,
+      instagram_template: resolved.instagram_template,
     };
   });
 

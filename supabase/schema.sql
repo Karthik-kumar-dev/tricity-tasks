@@ -5,17 +5,19 @@
 
 -- Tasks table (no release_date; admin toggles is_active)
 CREATE TABLE IF NOT EXISTS tasks (
-  id                 SERIAL PRIMARY KEY,
-  title              TEXT NOT NULL,
-  description        TEXT NOT NULL,
-  is_active          BOOLEAN NOT NULL DEFAULT false,
-  rules              TEXT,
-  linkedin_template  TEXT
+  id                  SERIAL PRIMARY KEY,
+  title               TEXT NOT NULL,
+  description         TEXT NOT NULL,
+  is_active           BOOLEAN NOT NULL DEFAULT false,
+  rules               TEXT,
+  linkedin_template   TEXT,
+  instagram_template  TEXT
 );
 
 -- Migration for existing tasks table in Supabase SQL Editor:
 -- ALTER TABLE tasks ADD COLUMN IF NOT EXISTS rules TEXT;
 -- ALTER TABLE tasks ADD COLUMN IF NOT EXISTS linkedin_template TEXT;
+-- ALTER TABLE tasks ADD COLUMN IF NOT EXISTS instagram_template TEXT;
 
 -- Submissions table with composite unique constraint
 CREATE TABLE IF NOT EXISTS submissions (
@@ -27,10 +29,15 @@ CREATE TABLE IF NOT EXISTS submissions (
   task_id                 INT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
   answer                  TEXT NOT NULL,
   link                    TEXT,
-  score                   INT CHECK (score >= 0 AND score <= 100),
+  score                   INT CHECK (score >= 0 AND score <= 20),
   created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (team_id, member_name_normalized, task_id)
 );
+
+-- Migration for existing scores (run in Supabase SQL Editor):
+-- UPDATE submissions SET score = ROUND(score * 20.0 / 100.0) WHERE score IS NOT NULL;
+-- ALTER TABLE submissions DROP CONSTRAINT IF EXISTS submissions_score_check;
+-- ALTER TABLE submissions ADD CONSTRAINT submissions_score_check CHECK (score >= 0 AND score <= 20);
 
 -- If you already have an existing submissions table, run this migration in Supabase SQL Editor:
 -- ALTER TABLE submissions ADD COLUMN IF NOT EXISTS college_name TEXT;
@@ -68,3 +75,49 @@ INSERT INTO tasks (title, description) VALUES
     'Task 5 — Final Showdown',
     'Combine insights from all previous tasks to crack the final challenge. This is a multi-step puzzle that tests everything you have learned. The answer is a single phrase — choose wisely.'
   );
+
+-- ============================================================
+-- Registrations Table & Atomic Replace Function
+-- Run in Supabase SQL Editor:
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS registrations (
+  id              SERIAL PRIMARY KEY,
+  registration_id TEXT NOT NULL,
+  team_name       TEXT NOT NULL,
+  role            TEXT NOT NULL,
+  member_name     TEXT NOT NULL,
+  UNIQUE (registration_id, role)
+);
+
+CREATE INDEX IF NOT EXISTS idx_registrations_registration_id ON registrations(registration_id);
+CREATE INDEX IF NOT EXISTS idx_registrations_team_name ON registrations(team_name);
+
+-- Atomic replacement function (single transaction: deletes all rows and inserts new rows, rolling back on error)
+CREATE OR REPLACE FUNCTION replace_registrations(rows jsonb)
+RETURNS jsonb
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  inserted_count int := 0;
+BEGIN
+  -- Delete all existing rows
+  DELETE FROM registrations;
+
+  -- Insert new rows from json array
+  INSERT INTO registrations (registration_id, team_name, role, member_name)
+  SELECT 
+    TRIM(r->>'registration_id'),
+    TRIM(r->>'team_name'),
+    TRIM(r->>'role'),
+    TRIM(r->>'member_name')
+  FROM jsonb_array_elements(rows) AS r;
+
+  GET DIAGNOSTICS inserted_count = ROW_COUNT;
+
+  RETURN json_build_object('success', true, 'count', inserted_count);
+EXCEPTION WHEN OTHERS THEN
+  RAISE;
+END;
+$$;
+

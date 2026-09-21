@@ -4,6 +4,7 @@ import path from "path";
 export interface TaskOverrides {
   rules?: string | null;
   linkedin_template?: string | null;
+  instagram_template?: string | null;
   title?: string;
   description?: string;
 }
@@ -19,6 +20,18 @@ Excited to collaborate, build cutting-edge AI solutions, and compete with top ta
 
 #TriCityAIHackathon #Centle #WarangalTech #AI #Hackathon #Innovation #StudentDevelopers`;
 
+const DEFAULT_INSTAGRAM_TEMPLATE = `Registered for the TRI-CITY AI HACKATHON 2026! 🚀🔥
+
+👤 Name: {name}
+🎓 College: {college}
+📍 Warangal · Hanamkonda · Kazipet
+🗓️ October 10 - 11, 2026 | 24-Hour AI Sprint
+
+Ready to build, hack, and innovate with the brightest minds in the Tri-City region! 💡⚡
+
+Tagging @tricityhackathon @centle.in
+#TriCityAIHackathon #Centle #AIHackathon #WarangalHackers #TechInnovation #Hackathon2026 #StudentDevelopers #BuildTheFuture`;
+
 export function getDefaultRules(taskId: number): string {
   switch (taskId) {
     case 1:
@@ -26,9 +39,9 @@ export function getDefaultRules(taskId: number): string {
         "1. Profile Photo: Upload a high-quality front-facing photo and crop it to fit inside the circular badge frame.",
         "2. Participant Details: Ensure your full name and college name are spelled correctly before generating your badge.",
         "3. Download Poster: Generate and download the official high-resolution registration poster image.",
-        "4. LinkedIn Sharing: Post the poster to your LinkedIn profile using the provided caption. Tag @Tri-City Hackathon and @Centle.",
-        "5. Submit Post URL: Copy the public link to your live LinkedIn post and submit it below to register your completion and claim points.",
-        "6. Verification & Fair Play: Each participant submits once. The LinkedIn post must remain public until evaluations conclude. Invalid or broken URLs will be awarded zero points.",
+        "4. Social Media Sharing: Post your poster to both Instagram and LinkedIn using the official ready-made captions. Tag @Tri-City Hackathon and @Centle.",
+        "5. Submit Post URLs: Copy and submit both your live Instagram post/reel link and your live LinkedIn post link below to claim your points.",
+        "6. Verification & Fair Play: Each participant submits once. The posts must remain public until evaluations conclude. Invalid or broken URLs will be awarded zero points.",
       ].join("\n");
     case 2:
       return [
@@ -69,6 +82,10 @@ export function getDefaultLinkedInTemplate(): string {
   return DEFAULT_LINKEDIN_TEMPLATE;
 }
 
+export function getDefaultInstagramTemplate(): string {
+  return DEFAULT_INSTAGRAM_TEMPLATE;
+}
+
 const CONFIG_FILE_PATH = path.join(process.cwd(), "data", "task_config.json");
 
 function ensureDirectoryExistence(filePath: string) {
@@ -105,7 +122,7 @@ export function saveLocalOverride(taskId: number, data: TaskOverrides): void {
 }
 
 /**
- * Resolves the rules and linkedin template for a task:
+ * Resolves the rules, linkedin template, and instagram template for a task:
  * 1. Database value if non-empty string
  * 2. Local config file override if exists
  * 3. Default rule/template for the given taskId
@@ -114,7 +131,8 @@ export function resolveTaskRulesAndTemplate(task: {
   id: number;
   rules?: string | null;
   linkedin_template?: string | null;
-}): { rules: string; linkedin_template: string } {
+  instagram_template?: string | null;
+}): { rules: string; linkedin_template: string; instagram_template: string } {
   const local = getLocalOverrides()[task.id] || {};
 
   const rules =
@@ -127,5 +145,10 @@ export function resolveTaskRulesAndTemplate(task: {
     (local.linkedin_template && local.linkedin_template.trim()) ||
     (task.id === 1 ? getDefaultLinkedInTemplate() : "");
 
-  return { rules, linkedin_template };
+  const instagram_template =
+    (task.instagram_template && task.instagram_template.trim()) ||
+    (local.instagram_template && local.instagram_template.trim()) ||
+    (task.id === 1 ? getDefaultInstagramTemplate() : "");
+
+  return { rules, linkedin_template, instagram_template };
 }

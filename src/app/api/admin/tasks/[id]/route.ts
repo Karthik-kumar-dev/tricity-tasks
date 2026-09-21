@@ -19,12 +19,15 @@ export async function PATCH(
   }
 
   const body = await request.json();
-  const { rules, linkedin_template, title, description } = body;
+  const { rules, linkedin_template, instagram_template, title, description } = body;
 
   const updateData: Record<string, unknown> = {};
   if (typeof rules === "string") updateData.rules = rules.trim() || null;
   if (typeof linkedin_template === "string") {
     updateData.linkedin_template = linkedin_template.trim() || null;
+  }
+  if (typeof instagram_template === "string") {
+    updateData.instagram_template = instagram_template.trim() || null;
   }
   if (typeof title === "string" && title.trim()) updateData.title = title.trim();
   if (typeof description === "string" && description.trim()) {
@@ -39,6 +42,7 @@ export async function PATCH(
   saveLocalOverride(taskId, {
     rules: typeof rules === "string" ? rules : undefined,
     linkedin_template: typeof linkedin_template === "string" ? linkedin_template : undefined,
+    instagram_template: typeof instagram_template === "string" ? instagram_template : undefined,
     title: typeof title === "string" ? title : undefined,
     description: typeof description === "string" ? description : undefined,
   });
@@ -49,7 +53,7 @@ export async function PATCH(
     .from("tasks")
     .update(updateData)
     .eq("id", taskId)
-    .select("id, title, description, is_active, rules, linkedin_template")
+    .select("id, title, description, is_active, rules, linkedin_template, instagram_template")
     .single();
 
   // If columns don't exist yet in Supabase, update basic fields and resolve
@@ -57,7 +61,8 @@ export async function PATCH(
     error &&
     (error.code === "42703" ||
       error.message?.includes("rules") ||
-      error.message?.includes("linkedin_template"))
+      error.message?.includes("linkedin_template") ||
+      error.message?.includes("instagram_template"))
   ) {
     const basicUpdate: Record<string, unknown> = {};
     if (updateData.title) basicUpdate.title = updateData.title;
@@ -70,7 +75,9 @@ export async function PATCH(
         .eq("id", taskId)
         .select("id, title, description, is_active")
         .single();
-      data = retry.data ? { ...retry.data, rules: null, linkedin_template: null } : null;
+      data = retry.data
+        ? { ...retry.data, rules: null, linkedin_template: null, instagram_template: null }
+        : null;
       error = retry.error;
     } else {
       const fetchCurrent = await supabase
@@ -78,7 +85,9 @@ export async function PATCH(
         .select("id, title, description, is_active")
         .eq("id", taskId)
         .single();
-      data = fetchCurrent.data ? { ...fetchCurrent.data, rules: null, linkedin_template: null } : null;
+      data = fetchCurrent.data
+        ? { ...fetchCurrent.data, rules: null, linkedin_template: null, instagram_template: null }
+        : null;
       error = fetchCurrent.error;
     }
   }
@@ -91,6 +100,7 @@ export async function PATCH(
     id: data.id,
     rules: data.rules,
     linkedin_template: data.linkedin_template,
+    instagram_template: data.instagram_template,
   });
 
   return NextResponse.json({
@@ -99,6 +109,7 @@ export async function PATCH(
       ...data,
       rules: resolved.rules,
       linkedin_template: resolved.linkedin_template,
+      instagram_template: resolved.instagram_template,
     },
   });
 }

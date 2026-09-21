@@ -28,6 +28,7 @@ interface TaskData {
   description: string;
   rules?: string | null;
   linkedin_template?: string | null;
+  instagram_template?: string | null;
 }
 
 export default function TaskPage({ params }: { params: Promise<{ id: string }> }) {
@@ -243,6 +244,7 @@ export default function TaskPage({ params }: { params: Promise<{ id: string }> }
             collegeName={identity.college_name}
             rules={task.rules}
             customTemplate={task.linkedin_template}
+            customInstagramTemplate={task.instagram_template}
           />
         ) : (
           /* Submission Section */

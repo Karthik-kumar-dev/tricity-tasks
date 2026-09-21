@@ -46,6 +46,8 @@ const POSTER_TASK_ID = 1;
 
 // Accepts: https://www.linkedin.com/posts/... or /feed/update/...
 const LINKEDIN_URL_RE = /^https:\/\/(www\.)?linkedin\.com\/(posts|feed\/update)\//i;
+// Accepts: https://www.instagram.com/p/... or /reel/... or /...
+const INSTAGRAM_URL_RE = /^https:\/\/(www\.)?instagram\.com\/[a-zA-Z0-9_\-\.\/]+/i;
 
 /* ─────────────────────────────────────────────────────────────
    Helpers
@@ -121,7 +123,7 @@ function slugifyName(name: string): string {
   return slug || "participant";
 }
 
-function buildCaption(name: string, college: string, template?: string | null): string {
+function buildLinkedInCaption(name: string, college: string, template?: string | null): string {
   const formattedName = toTitleCase(name) || "Student Innovator";
   const formattedCollege = college.trim() || "Your College";
 
@@ -132,16 +134,41 @@ function buildCaption(name: string, college: string, template?: string | null): 
   }
 
   return [
-    `I'm officially registered for the TRI-CITY AI HACKATHON 2026!`,
+    `I'm officially registered for the TRI-CITY AI HACKATHON 2026! 🚀`,
     ``,
     `Name : ${formattedName}`,
     `College : ${formattedCollege}`,
     `Where : Warangal · Hanamkonda · Kazipet`,
     `When : October 10 - 11, 2026 | 24-hour sprint`,
     ``,
-    `My personal registration poster is ready. Pumped to build, learn and compete with the best minds across the tri-cities!`,
+    `Excited to collaborate, build cutting-edge AI solutions, and compete with top talent across the Tri-City region. Let's make it happen!`,
     ``,
-    `#TriCityAIHackathon #CentleIndia #AIHackathon #Hackathon2026 #Warangal #Hanamkonda #Kazipet #Innovation #TechCommunity #StudentDevelopers`,
+    `#TriCityAIHackathon #Centle #WarangalTech #AI #Hackathon #Innovation #StudentDevelopers`,
+  ].join("\n");
+}
+
+function buildInstagramCaption(name: string, college: string, template?: string | null): string {
+  const formattedName = toTitleCase(name) || "Student Innovator";
+  const formattedCollege = college.trim() || "Your College";
+
+  if (template && template.trim()) {
+    return template
+      .replace(/{name}/gi, formattedName)
+      .replace(/{college}/gi, formattedCollege);
+  }
+
+  return [
+    `Registered for the TRI-CITY AI HACKATHON 2026! 🚀🔥`,
+    ``,
+    `👤 Name: ${formattedName}`,
+    `🎓 College: ${formattedCollege}`,
+    `📍 Warangal · Hanamkonda · Kazipet`,
+    `🗓️ October 10 - 11, 2026 | 24-Hour AI Sprint`,
+    ``,
+    `Ready to build, hack, and innovate with the brightest minds in the Tri-City region! 💡⚡`,
+    ``,
+    `Tagging @tricityhackathon @centle.in`,
+    `#TriCityAIHackathon #Centle #AIHackathon #WarangalHackers #TechInnovation #Hackathon2026 #StudentDevelopers #BuildTheFuture`,
   ].join("\n");
 }
 
@@ -154,6 +181,7 @@ interface Props {
   collegeName: string; // cookie default
   rules?: string | null;
   customTemplate?: string | null;
+  customInstagramTemplate?: string | null;
 }
 
 export default function Task1PosterFlow({
@@ -162,6 +190,7 @@ export default function Task1PosterFlow({
   collegeName,
   rules,
   customTemplate,
+  customInstagramTemplate,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const redrawTimerRef = useRef<number | null>(null);
@@ -186,22 +215,31 @@ export default function Task1PosterFlow({
   const [zoom, setZoom] = useState(1);
 
   // Caption state
+  const [captionTab, setCaptionTab] = useState<"instagram" | "linkedin">("instagram");
   const [copied, setCopied] = useState(false);
 
   // Submission state
-  const [savedLink, setSavedLink] = useState<string | null>(null);
+  const [savedInstagramLink, setSavedInstagramLink] = useState<string | null>(null);
+  const [savedLinkedInLink, setSavedLinkedInLink] = useState<string | null>(null);
   const [alreadySubmitted, setAlreadySubmitted] = useState(false);
   const [editingLink, setEditingLink] = useState(false);
-  const [postUrl, setPostUrl] = useState("");
-  const [linkError, setLinkError] = useState("");
+  const [instagramUrl, setInstagramUrl] = useState("");
+  const [linkedInUrl, setLinkedInUrl] = useState("");
+  const [instagramError, setInstagramError] = useState("");
+  const [linkedInError, setLinkedInError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
   const [submitStatus, setSubmitStatus] = useState<"idle" | "done">("idle");
 
-  const caption = useMemo(
-    () => buildCaption(name, college, customTemplate),
+  const linkedInCaption = useMemo(
+    () => buildLinkedInCaption(name, college, customTemplate),
     [name, college, customTemplate]
   );
+  const instagramCaption = useMemo(
+    () => buildInstagramCaption(name, college, customInstagramTemplate),
+    [name, college, customInstagramTemplate]
+  );
+  const currentCaption = captionTab === "instagram" ? instagramCaption : linkedInCaption;
   const hasPhoto = photoDataUrl !== null;
 
   /* ── Fetch existing submission ── */
@@ -212,8 +250,17 @@ export default function Task1PosterFlow({
       .then((data) => {
         if (cancelled || !data.submitted) return;
         setAlreadySubmitted(true);
-        setSavedLink(data.link || null);
-        setPostUrl(data.link || "");
+        const insta =
+          data.instagram_url ||
+          (data.link && INSTAGRAM_URL_RE.test(data.link) ? data.link : null);
+        const linked =
+          data.linkedin_url ||
+          (data.link && LINKEDIN_URL_RE.test(data.link) ? data.link : null);
+        setSavedInstagramLink(insta);
+        setSavedLinkedInLink(linked);
+        setInstagramUrl(insta || "");
+        setLinkedInUrl(linked || "");
+        setSubmitStatus("done");
       })
       .catch(() => {
         /* non-fatal */
@@ -426,12 +473,12 @@ export default function Task1PosterFlow({
   /* ── Copy caption ── */
   async function handleCopy() {
     try {
-      await navigator.clipboard.writeText(caption);
+      await navigator.clipboard.writeText(currentCaption);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 2000);
     } catch {
       const ta = document.createElement("textarea");
-      ta.value = caption;
+      ta.value = currentCaption;
       ta.style.position = "fixed";
       ta.style.opacity = "0";
       document.body.appendChild(ta);
@@ -443,27 +490,46 @@ export default function Task1PosterFlow({
     }
   }
 
-  /* ── Submit LinkedIn link ── */
+  /* ── Validation helpers ── */
   function validateLinkedInUrl(value: string): boolean {
     return LINKEDIN_URL_RE.test(value.trim());
   }
 
+  function validateInstagramUrl(value: string): boolean {
+    return INSTAGRAM_URL_RE.test(value.trim());
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setLinkError("");
+    setInstagramError("");
+    setLinkedInError("");
     setSubmitError("");
 
-    const url = postUrl.trim();
-    if (!url) {
-      setLinkError("Please paste the public URL of your LinkedIn post.");
-      return;
+    const iUrl = instagramUrl.trim();
+    const lUrl = linkedInUrl.trim();
+
+    let hasError = false;
+    if (!iUrl) {
+      setInstagramError("Please paste the public URL of your Instagram post or reel.");
+      hasError = true;
+    } else if (!validateInstagramUrl(iUrl)) {
+      setInstagramError(
+        "That doesn't look like an Instagram URL. Use the format: https://www.instagram.com/p/... or https://www.instagram.com/reel/..."
+      );
+      hasError = true;
     }
-    if (!validateLinkedInUrl(url)) {
-      setLinkError(
+
+    if (!lUrl) {
+      setLinkedInError("Please paste the public URL of your LinkedIn post.");
+      hasError = true;
+    } else if (!validateLinkedInUrl(lUrl)) {
+      setLinkedInError(
         "That doesn't look like a LinkedIn post URL. Use the format: https://www.linkedin.com/posts/... or https://www.linkedin.com/feed/update/..."
       );
-      return;
+      hasError = true;
     }
+
+    if (hasError) return;
 
     setSubmitting(true);
     try {
@@ -474,7 +540,9 @@ export default function Task1PosterFlow({
           team_id: teamId,
           member_name: memberName || name,
           college_name: collegeName || college,
-          link: url,
+          instagram_url: iUrl,
+          linkedin_url: lUrl,
+          link: iUrl,
         }),
       });
       const data = await res.json();
@@ -483,7 +551,8 @@ export default function Task1PosterFlow({
         return;
       }
       setAlreadySubmitted(true);
-      setSavedLink(url);
+      setSavedInstagramLink(iUrl);
+      setSavedLinkedInLink(lUrl);
       setEditingLink(false);
       setSubmitStatus("done");
     } catch {
@@ -727,26 +796,67 @@ export default function Task1PosterFlow({
         </button>
       </section>
 
-      {/* ── 4. LinkedIn caption ── */}
+      {/* ── 4. Social Media post messages ── */}
       <section className="pro-card rounded-2xl p-6 bg-white">
         <div className="flex items-center gap-2 mb-4">
           <span className="px-2.5 py-1 rounded-md bg-slate-900 text-white text-xs font-mono font-bold">
             4
           </span>
-          <h3 className="font-heading font-bold text-lg text-slate-900">LinkedIn Post Message</h3>
+          <h3 className="font-heading font-bold text-lg text-slate-900">
+            Social Media Post Messages
+          </h3>
         </div>
-        <p className="text-xs text-slate-500 mb-3 font-display leading-relaxed">
-          Post your poster on LinkedIn and copy this ready-made caption.
+        <p className="text-xs text-slate-500 mb-4 font-display leading-relaxed">
+          Post your poster on both Instagram and LinkedIn. Select a platform below to view and copy its ready-made caption.
         </p>
+
+        {/* Platform Selector Tabs */}
+        <div className="flex items-center gap-2 mb-4 p-1 rounded-xl bg-slate-100 border border-slate-200">
+          <button
+            type="button"
+            onClick={() => {
+              setCaptionTab("instagram");
+              setCopied(false);
+            }}
+            className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-mono font-semibold transition-all ${
+              captionTab === "instagram"
+                ? "bg-white text-rose-700 shadow-xs border border-rose-200"
+                : "text-slate-600 hover:text-slate-900"
+            }`}
+          >
+            <span>📸</span>
+            <span>Instagram Caption</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setCaptionTab("linkedin");
+              setCopied(false);
+            }}
+            className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-mono font-semibold transition-all ${
+              captionTab === "linkedin"
+                ? "bg-white text-blue-700 shadow-xs border border-blue-200"
+                : "text-slate-600 hover:text-slate-900"
+            }`}
+          >
+            <span>💼</span>
+            <span>LinkedIn Caption</span>
+          </button>
+        </div>
+
         <textarea
           readOnly
           rows={11}
-          value={caption}
+          value={currentCaption}
           className="input-field text-sm font-display leading-relaxed resize-y"
         />
         <div className="mt-3 flex items-center gap-3">
-          <button type="button" onClick={handleCopy} className="btn-primary text-xs py-2.5 px-6">
-            {copied ? "Copied!" : "Copy Caption"}
+          <button
+            type="button"
+            onClick={handleCopy}
+            className="btn-primary text-xs py-2.5 px-6 inline-flex items-center gap-2"
+          >
+            <span>{copied ? "Copied!" : `Copy ${captionTab === "instagram" ? "Instagram" : "LinkedIn"} Caption`}</span>
           </button>
           {copied && (
             <span className="inline-flex items-center gap-1.5 text-xs font-mono font-bold text-emerald-700">
@@ -756,13 +866,13 @@ export default function Task1PosterFlow({
         </div>
       </section>
 
-      {/* ── 5. Submit LinkedIn link ── */}
+      {/* ── 5. Submit post links ── */}
       <section className="pro-card rounded-2xl p-6 bg-white">
         <div className="flex items-center gap-2 mb-4">
           <span className="px-2.5 py-1 rounded-md bg-slate-900 text-white text-xs font-mono font-bold">
             5
           </span>
-          <h3 className="font-heading font-bold text-lg text-slate-900">Submit Your Post Link</h3>
+          <h3 className="font-heading font-bold text-lg text-slate-900">Submit Your Post Links</h3>
         </div>
 
         {alreadySubmitted && submitStatus === "done" && !editingLink ? (
@@ -773,50 +883,103 @@ export default function Task1PosterFlow({
               </svg>
               Task 1 Completed!
             </div>
-            <p className="text-xs text-emerald-800 font-display leading-relaxed mb-3">
-              Your LinkedIn post link has been saved. Admins can now verify and award points.
+            <p className="text-xs text-emerald-800 font-display leading-relaxed mb-4">
+              Your Instagram and LinkedIn post links have been saved. Admins can now verify and award points.
             </p>
-            {savedLink && (
-              <a
-                href={savedLink}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="block text-xs font-mono text-teal-700 underline break-all mb-3"
-              >
-                {savedLink}
-              </a>
-            )}
+
+            <div className="space-y-2 mb-4">
+              {savedInstagramLink && (
+                <div className="p-3 rounded-lg bg-white/80 border border-emerald-200/80">
+                  <span className="block text-[10px] font-mono uppercase tracking-wider text-slate-500 font-semibold mb-1">
+                    📸 Instagram Post / Reel URL
+                  </span>
+                  <a
+                    href={savedInstagramLink}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block text-xs font-mono text-rose-700 hover:underline break-all font-semibold"
+                  >
+                    {savedInstagramLink}
+                  </a>
+                </div>
+              )}
+              {savedLinkedInLink && (
+                <div className="p-3 rounded-lg bg-white/80 border border-emerald-200/80">
+                  <span className="block text-[10px] font-mono uppercase tracking-wider text-slate-500 font-semibold mb-1">
+                    💼 LinkedIn Post URL
+                  </span>
+                  <a
+                    href={savedLinkedInLink}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block text-xs font-mono text-blue-700 hover:underline break-all font-semibold"
+                  >
+                    {savedLinkedInLink}
+                  </a>
+                </div>
+              )}
+            </div>
+
             <button
               type="button"
               onClick={() => setEditingLink(true)}
               className="btn-secondary text-xs py-2 px-5"
             >
-              Edit Link
+              Edit Links
             </button>
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
+            <p className="text-xs text-slate-500 font-display leading-relaxed">
+              Both links are required to complete Task 1 verification.
+            </p>
+
+            {/* Instagram URL Field */}
             <div>
               <label className="block text-xs font-mono font-semibold uppercase text-slate-700 mb-2">
-                Public LinkedIn post URL <span className="text-red-500">*</span>
+                📸 Public Instagram Post / Reel URL <span className="text-red-500">*</span>
               </label>
               <input
                 type="url"
-                value={postUrl}
+                value={instagramUrl}
                 onChange={(e) => {
-                  setPostUrl(e.target.value);
-                  setLinkError("");
+                  setInstagramUrl(e.target.value);
+                  setInstagramError("");
+                }}
+                placeholder="https://www.instagram.com/p/..."
+                className="input-field text-xs"
+              />
+              <p className="text-[11px] text-slate-400 font-display mt-1.5">
+                Open your post or reel on Instagram, tap Share (or three dots) and choose &quot;Copy link&quot; — then paste it here.
+              </p>
+              {instagramError && (
+                <div className="mt-2 p-3.5 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs font-mono">
+                  {instagramError}
+                </div>
+              )}
+            </div>
+
+            {/* LinkedIn URL Field */}
+            <div>
+              <label className="block text-xs font-mono font-semibold uppercase text-slate-700 mb-2">
+                💼 Public LinkedIn Post URL <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="url"
+                value={linkedInUrl}
+                onChange={(e) => {
+                  setLinkedInUrl(e.target.value);
+                  setLinkedInError("");
                 }}
                 placeholder="https://www.linkedin.com/posts/..."
                 className="input-field text-xs"
               />
               <p className="text-[11px] text-slate-400 font-display mt-1.5">
-                Open your post on LinkedIn, tap the three dots and choose &quot;Copy link to post&quot; — then
-                paste it here.
+                Open your post on LinkedIn, tap the three dots and choose &quot;Copy link to post&quot; — then paste it here.
               </p>
-              {linkError && (
+              {linkedInError && (
                 <div className="mt-2 p-3.5 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs font-mono">
-                  {linkError}
+                  {linkedInError}
                 </div>
               )}
             </div>
@@ -834,11 +997,11 @@ export default function Task1PosterFlow({
             >
               {submitting
                 ? alreadySubmitted
-                  ? "Updating..."
+                  ? "Updating Links..."
                   : "Submitting..."
                 : alreadySubmitted
-                ? "Update Link"
-                : "Submit Task 1"}
+                ? "Update Links"
+                : "Submit Task 1 Links"}
             </button>
           </form>
         )}

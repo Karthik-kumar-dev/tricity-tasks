@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabase } from "@/lib/supabase-server";
 import { verifyAdmin } from "@/lib/auth";
+import { TASK_POINTS, roundScore } from "@/lib/constants";
 
 export async function PATCH(
   request: NextRequest,
@@ -24,10 +25,10 @@ export async function PATCH(
     return NextResponse.json({ error: "Score is required" }, { status: 400 });
   }
 
-  const numScore = parseInt(score, 10);
-  if (isNaN(numScore) || numScore < 0 || numScore > 100) {
+  const numScore = roundScore(parseFloat(score));
+  if (isNaN(numScore) || numScore < 0 || numScore > TASK_POINTS) {
     return NextResponse.json(
-      { error: "Score must be between 0 and 100" },
+      { error: `Score must be between 0 and ${TASK_POINTS}` },
       { status: 400 }
     );
   }

@@ -35,9 +35,30 @@ export async function GET(
     return NextResponse.json({ submitted: false });
   }
 
+  let instagram_url = "";
+  let linkedin_url = "";
+
+  if (existing.answer) {
+    const instaMatch = existing.answer.match(/Instagram:\s*(https:\/\/[^\s\n]+)/i);
+    if (instaMatch) instagram_url = instaMatch[1];
+    const linkedInMatch = existing.answer.match(/LinkedIn:\s*(https:\/\/[^\s\n]+)/i);
+    if (linkedInMatch) linkedin_url = linkedInMatch[1];
+  }
+
+  if (existing.link) {
+    if (!instagram_url && /^https:\/\/(www\.)?instagram\.com\//i.test(existing.link)) {
+      instagram_url = existing.link;
+    }
+    if (!linkedin_url && /^https:\/\/(www\.)?linkedin\.com\//i.test(existing.link)) {
+      linkedin_url = existing.link;
+    }
+  }
+
   return NextResponse.json({
     submitted: true,
     link: existing.link || null,
+    instagram_url: instagram_url || null,
+    linkedin_url: linkedin_url || null,
     answer: existing.answer || null,
     college_name: existing.college_name || null,
   });
