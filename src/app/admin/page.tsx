@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
-import { MAX_SCORE, TASK_POINTS } from "@/lib/constants";
+import { MAX_SCORE, TASK_POINTS, FUTURE_PLAN_OPTIONS } from "@/lib/constants";
 
 interface Task {
   id: number;
@@ -28,6 +28,7 @@ interface Submission {
   id: number;
   member_name: string;
   college_name?: string | null;
+  future_plan?: string | null;
   task_id: number;
   task_title: string;
   answer: string;
@@ -138,6 +139,15 @@ export default function AdminPage() {
   const [uploadingReg, setUploadingReg] = useState(false);
   const [currentRegStats, setCurrentRegStats] = useState<{ teamCount: number } | null>(null);
 
+  // Add User form state
+  const [addUserModalOpen, setAddUserModalOpen] = useState(false);
+  const [addingUser, setAddingUser] = useState(false);
+  const [addUserError, setAddUserError] = useState("");
+  const [newRegId, setNewRegId] = useState("");
+  const [newTeamName, setNewTeamName] = useState("");
+  const [newRole, setNewRole] = useState("");
+  const [newMemberName, setNewMemberName] = useState("");
+
   // Task editing state (rules, template, description)
   const [editingTaskId, setEditingTaskId] = useState<number | null>(null);
   const [taskEditTitle, setTaskEditTitle] = useState("");
@@ -165,6 +175,7 @@ export default function AdminPage() {
   // Search + delete state
   const [teamSearch, setTeamSearch] = useState("");
   const [subSearch, setSubSearch] = useState("");
+  const [subPlanFilter, setSubPlanFilter] = useState<string>("all");
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
   const [confirmAction, setConfirmAction] = useState<
@@ -304,6 +315,44 @@ export default function AdminPage() {
       setRegError(`CSV parse error: ${msg}`);
     } finally {
       setRegParsing(false);
+    }
+  }
+
+  async function addUser(regId: string, teamName: string, role: string, memberName: string) {
+    setAddUserError("");
+    setAddingUser(true);
+
+    try {
+      const res = await fetch("/api/admin/registrations/add", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          registration_id: regId.trim(),
+          team_name: teamName.trim(),
+          role: role.trim(),
+          member_name: memberName.trim(),
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        setAddUserError(data.error || "Failed to add user.");
+        return;
+      }
+
+      // Success
+      setAddUserModalOpen(false);
+      setNewRegId("");
+      setNewTeamName("");
+      setNewRole("");
+      setNewMemberName("");
+      setRegSuccess(`✓ Successfully added user: ${data.member_name} (${data.role}) to team ${data.registration_id}${data.team_name ? ` - ${data.team_name}` : ""}.`);
+      fetchRegStats();
+      fetchTeams();
+    } catch {
+      setAddUserError("Network error occurred while adding user.");
+    } finally {
+      setAddingUser(false);
     }
   }
 
@@ -643,14 +692,27 @@ export default function AdminPage() {
     : teams;
 
   const subSearchLower = subSearch.trim().toLowerCase();
-  const filteredSubs = subSearchLower
-    ? submissions.filter(
-        (s) =>
-          s.member_name.toLowerCase().includes(subSearchLower) ||
-          s.task_title.toLowerCase().includes(subSearchLower) ||
-          (s.college_name && s.college_name.toLowerCase().includes(subSearchLower))
-      )
-    : submissions;
+  const filteredSubs = submissions.filter((s) => {
+    if (subSearchLower) {
+      const matchSearch =
+        s.member_name.toLowerCase().includes(subSearchLower) ||
+        s.task_title.toLowerCase().includes(subSearchLower) ||
+        (s.college_name && s.college_name.toLowerCase().includes(subSearchLower)) ||
+        (s.future_plan && s.future_plan.toLowerCase().includes(subSearchLower));
+      if (!matchSearch) return false;
+    }
+
+    if (subPlanFilter !== "all") {
+      if (!s.future_plan) return false;
+      if (subPlanFilter === "Others (please specify)") {
+        if (!s.future_plan.toLowerCase().startsWith("others")) return false;
+      } else {
+        if (s.future_plan.toLowerCase() !== subPlanFilter.toLowerCase()) return false;
+      }
+    }
+
+    return true;
+  });
 
   // ── Checking State ──
   if (checking) {
@@ -1224,19 +1286,46 @@ export default function AdminPage() {
                         </button>
                       </div>
 
-                      {/* Submissions Search */}
-                      <input
-                        type="text"
-                        className="input-field text-xs bg-white"
-                        placeholder="⌕ Search submissions by member name or task..."
-                        value={subSearch}
-                        onChange={(e) => setSubSearch(e.target.value)}
-                      />
+                      {/* Submissions Search & Filter */}
+                      <div className="flex flex-col sm:flex-row gap-2.5 items-stretch sm:items-center">
+                        <div className="flex-1 relative">
+                          <input
+                            type="text"
+                            className="input-field text-xs bg-white w-full"
+                            placeholder="⌕ Search submissions by member, task, college, plan..."
+                            value={subSearch}
+                            onChange={(e) => setSubSearch(e.target.value)}
+                          />
+                          {subSearch && (
+                            <button
+                              type="button"
+                              onClick={() => setSubSearch("")}
+                              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs font-mono"
+                            >
+                              ✕
+                            </button>
+                          )}
+                        </div>
+
+                        <select
+                          value={subPlanFilter}
+                          onChange={(e) => setSubPlanFilter(e.target.value)}
+                          className="input-field text-xs bg-white sm:w-56 cursor-pointer font-mono shrink-0"
+                          title="Filter by future plan"
+                        >
+                          <option value="all">🎯 All Future Plans</option>
+                          {FUTURE_PLAN_OPTIONS.map((opt) => (
+                            <option key={opt} value={opt}>
+                              {opt}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
 
                       {filteredSubs.length === 0 ? (
                         <div className="pro-card rounded-2xl p-10 text-center text-sm text-slate-500 bg-white">
-                          {subSearch
-                            ? `No submissions matching "${subSearch}"`
+                          {subSearch || subPlanFilter !== "all"
+                            ? `No submissions matching your filter/search criteria.`
                             : "No submissions recorded for this team."}
                         </div>
                       ) : (
@@ -1255,6 +1344,11 @@ export default function AdminPage() {
                                     {sub.college_name && (
                                       <span className="px-2 py-0.5 rounded-full text-[11px] font-mono text-slate-600 bg-slate-100 border border-slate-200">
                                         🏫 {sub.college_name}
+                                      </span>
+                                    )}
+                                    {sub.future_plan && (
+                                      <span className="px-2 py-0.5 rounded-full text-[11px] font-mono font-medium text-indigo-700 bg-indigo-50 border border-indigo-200" title={`Future Plan: ${sub.future_plan}`}>
+                                        🎯 {sub.future_plan}
                                       </span>
                                     )}
                                     <span className="px-2.5 py-0.5 rounded-full text-xs font-mono font-semibold bg-teal-50 text-teal-800 border border-teal-200">
@@ -1428,7 +1522,7 @@ export default function AdminPage() {
           </div>
         )}
 
-        {/* ── TAB 3: REGISTRATIONS CSV UPLOAD ── */}
+{/* ── TAB 3: REGISTRATIONS CSV UPLOAD ── */}
         {activeTab === "registrations" && (
           <div className="max-w-4xl mx-auto space-y-6">
             <div className="flex items-center justify-between mb-2">
@@ -1437,15 +1531,196 @@ export default function AdminPage() {
                   Team Registrations CSV Management
                 </h2>
                 <p className="text-xs text-slate-500 font-display">
-                  Upload your registered teams CSV. Replaces all rows in the &quot;registrations&quot; table in a single atomic transaction without touching submissions or any other tables.
+                  Upload your registered teams CSV. Replaces all rows in the "registrations" table in a single atomic transaction without touching submissions or any other tables.
                 </p>
               </div>
-              {currentRegStats && (
-                <div className="px-3 py-1.5 rounded-lg bg-teal-50 border border-teal-200 text-teal-800 font-mono text-xs">
-                  Active Teams: <strong>{currentRegStats.teamCount}</strong>
-                </div>
-              )}
+              <div className="flex items-center gap-2">
+                {currentRegStats && (
+                  <div className="px-3 py-1.5 rounded-lg bg-teal-50 border border-teal-200 text-teal-800 font-mono text-xs">
+                    Active Teams: <strong>{currentRegStats.teamCount}</strong>
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAddUserModalOpen(!addUserModalOpen);
+                    setAddUserError("");
+                  }}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border font-mono text-xs font-semibold uppercase transition-colors cursor-pointer ${
+                    addUserModalOpen
+                      ? "bg-slate-100 border-slate-300 text-slate-700"
+                      : "border-teal-200 bg-teal-50 hover:bg-teal-100 text-teal-800"
+                  }`}
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth="2"
+                      d={addUserModalOpen ? "M6 18L18 6M6 6l12 12" : "M12 4v16m8-8H4"}
+                    />
+                  </svg>
+                  <span>{addUserModalOpen ? "Close Form" : "Add User"}</span>
+                </button>
+              </div>
             </div>
+
+            {/* Add User Form */}
+            {addUserModalOpen && (
+              <div className="pro-card rounded-2xl p-6 bg-white border border-teal-200/90 shadow-sm space-y-4">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                  <div>
+                    <h3 className="font-heading font-bold text-base text-slate-900 flex items-center gap-2">
+                      <span className="w-6 h-6 rounded-md bg-teal-600 text-white text-xs flex items-center justify-center font-mono">
+                        +
+                      </span>
+                      Add Individual User / Team Member
+                    </h3>
+                    <p className="text-xs text-slate-500 font-display mt-0.5">
+                      Directly add a new member into the registrations table without re-uploading a full CSV.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setAddUserModalOpen(false)}
+                    className="text-slate-400 hover:text-slate-600 font-mono text-xs cursor-pointer"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                {addUserError && (
+                  <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs font-mono">
+                    {addUserError}
+                  </div>
+                )}
+
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    addUser(newRegId, newTeamName, newRole, newMemberName);
+                  }}
+                  className="space-y-4"
+                >
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {/* 1. Registration ID */}
+                    <div>
+                      <label className="block text-xs font-mono font-semibold uppercase text-slate-700 mb-1.5">
+                        Registration ID <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        className="input-field text-xs font-mono uppercase bg-white"
+                        value={newRegId}
+                        onChange={(e) => {
+                          const val = e.target.value.toUpperCase();
+                          setNewRegId(val);
+                        }}
+                        placeholder="e.g. TRI26001 or REG-001"
+                        required
+                      />
+                      <p className="text-[10px] font-mono text-slate-400 mt-1">
+                        Team identifier used for task start &amp; submission.
+                      </p>
+                    </div>
+
+                    {/* 2. Team Name */}
+                    <div>
+                      <label className="block text-xs font-mono font-semibold uppercase text-slate-700 mb-1.5">
+                        Team Name
+                      </label>
+                      <input
+                        type="text"
+                        className="input-field text-xs bg-white"
+                        value={newTeamName}
+                        onChange={(e) => setNewTeamName(e.target.value)}
+                        placeholder="e.g. Team Alpha"
+                      />
+                      <p className="text-[10px] font-mono text-slate-400 mt-1">
+                        Optional if the Registration ID already exists.
+                      </p>
+                    </div>
+
+                    {/* 3. Role */}
+                    <div>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <label className="block text-xs font-mono font-semibold uppercase text-slate-700">
+                          Role
+                        </label>
+                        <div className="flex items-center gap-1">
+                          {["Leader", "Member", "Member 1", "Member 2"].map((r) => (
+                            <button
+                              key={r}
+                              type="button"
+                              onClick={() => setNewRole(r)}
+                              className={`px-1.5 py-0.5 rounded text-[10px] font-mono transition-colors ${
+                                newRole.toLowerCase() === r.toLowerCase()
+                                  ? "bg-teal-600 text-white font-bold"
+                                  : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                              }`}
+                            >
+                              {r}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <input
+                        type="text"
+                        className="input-field text-xs bg-white font-mono"
+                        value={newRole}
+                        onChange={(e) => setNewRole(e.target.value)}
+                        placeholder="e.g. Leader or Member"
+                      />
+                    </div>
+
+                    {/* 4. Member Name */}
+                    <div>
+                      <label className="block text-xs font-mono font-semibold uppercase text-slate-700 mb-1.5">
+                        Name <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        className="input-field text-xs bg-white"
+                        value={newMemberName}
+                        onChange={(e) => setNewMemberName(e.target.value)}
+                        placeholder="e.g. Rahul Sharma"
+                        required
+                      />
+                      <p className="text-[10px] font-mono text-slate-400 mt-1">
+                        Full participant name.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-end gap-3 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAddUserModalOpen(false);
+                        setAddUserError("");
+                      }}
+                      className="btn-secondary text-xs py-2 px-5 cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={addingUser}
+                      className="btn-primary text-xs py-2 px-6 bg-teal-700 hover:bg-teal-800 text-white font-mono font-bold transition-colors shadow-xs cursor-pointer inline-flex items-center gap-2"
+                    >
+                      {addingUser ? (
+                        <>
+                          <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                          <span>Adding User...</span>
+                        </>
+                      ) : (
+                        <span>+ Add User to Database</span>
+                      )}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            )}
 
             {/* Upload Box Card */}
             <div className="pro-card rounded-2xl p-6 bg-white border border-slate-200 shadow-2xs space-y-5">

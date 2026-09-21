@@ -15,6 +15,7 @@ function buildRowsFromSubmissions(
     team_id: string;
     member_name: string;
     college_name?: string | null;
+    future_plan?: string | null;
     task_id: number;
     task_title: string;
     answer: string;
@@ -27,6 +28,7 @@ function buildRowsFromSubmissions(
     s.team_id,
     s.member_name,
     s.college_name || "—",
+    s.future_plan || "—",
     s.task_title,
     s.answer,
     s.link || "",
@@ -131,8 +133,13 @@ export async function GET(request: NextRequest) {
     .order("team_id", { ascending: true })
     .order("task_id", { ascending: true });
 
-  // Fallback if college_name column does not exist yet in Supabase
-  if (error && (error.code === "42703" || error.message?.includes("college_name"))) {
+  // Fallback if college_name or future_plan column does not exist yet in Supabase
+  if (
+    error &&
+    (error.code === "42703" ||
+      error.message?.includes("college_name") ||
+      error.message?.includes("future_plan"))
+  ) {
     let fallbackQuery = supabase
       .from("submissions")
       .select("team_id, member_name, task_id, answer, link, score, created_at");
@@ -141,7 +148,11 @@ export async function GET(request: NextRequest) {
     const retry = await fallbackQuery
       .order("team_id", { ascending: true })
       .order("task_id", { ascending: true });
-    submissions = (retry.data || []).map((s) => ({ ...s, college_name: null }));
+    submissions = (retry.data || []).map((s) => ({
+      ...s,
+      college_name: null,
+      future_plan: null,
+    }));
     error = retry.error;
   }
 
@@ -169,6 +180,7 @@ export async function GET(request: NextRequest) {
     "Team ID",
     "Member Name",
     "College",
+    "Future Plan",
     "Task",
     "Answer",
     "Link",

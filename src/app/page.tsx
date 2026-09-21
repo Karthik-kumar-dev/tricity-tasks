@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useMemo } from "react";
 import Link from "next/link";
-import { MAX_SCORE, TASK_POINTS, TOTAL_TASKS } from "@/lib/constants";
+import { MAX_SCORE, TASK_POINTS, TOTAL_TASKS, FUTURE_PLAN_OPTIONS } from "@/lib/constants";
 
 interface Task {
   id: number;
@@ -59,7 +59,8 @@ export default function HomePage() {
   const [teamMembers, setTeamMembers] = useState<Array<{ member_name: string; role: string }>>([]);
   const [loadingMembers, setLoadingMembers] = useState(false);
   const [selectedMember, setSelectedMember] = useState<{ member_name: string; role: string } | null>(null);
-  const [manualMode, setManualMode] = useState(false);
+  const [futurePlan, setFuturePlan] = useState("");
+  const [futurePlanOther, setFuturePlanOther] = useState("");
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [activeFaq, setActiveFaq] = useState<number | null>(null);
   const [galleryFilter, setGalleryFilter] = useState<"all" | "day1" | "day2">("all");
@@ -136,6 +137,15 @@ export default function HomePage() {
       }
     }
 
+    if (cookies.future_plan) {
+      if (cookies.future_plan.startsWith("Others: ")) {
+        setFuturePlan("Others (please specify)");
+        setFuturePlanOther(cookies.future_plan.slice(8));
+      } else {
+        setFuturePlan(cookies.future_plan);
+      }
+    }
+
     fetch("/api/tasks")
       .then((res) => res.json())
       .then((data) => setTasks(data.tasks || []))
@@ -152,7 +162,6 @@ export default function HomePage() {
   // Debounced search for teams dropdown
   useEffect(() => {
     if (!activeModal) return;
-    if (manualMode) return;
 
     const timer = setTimeout(() => {
       setLoadingTeams(true);
@@ -166,7 +175,7 @@ export default function HomePage() {
     }, 200);
 
     return () => clearTimeout(timer);
-  }, [teamSearchInput, activeModal, manualMode]);
+  }, [teamSearchInput, activeModal]);
 
   async function handleSearch(e: React.FormEvent) {
     e.preventDefault();
@@ -237,45 +246,36 @@ export default function HomePage() {
     e.preventDefault();
     setFormError("");
 
-    let regId = "";
-    let tName = "";
-    let mName = "";
-    let role = "";
-    const colName = formData.college_name.trim();
-
-    if (!manualMode) {
-      if (!selectedTeam) {
-        setFormError("Please select your team from the dropdown search");
-        return;
-      }
-      if (!selectedMember) {
-        setFormError("Please select your name from the team members list");
-        return;
-      }
-      if (!colName) {
-        setFormError("Please enter your college name");
-        return;
-      }
-      regId = selectedTeam.registration_id.trim();
-      tName = selectedTeam.team_name.trim();
-      mName = selectedMember.member_name.trim();
-      role = selectedMember.role.trim();
-    } else {
-      regId = formData.team_id.trim();
-      mName = formData.member_name.trim();
-      if (!regId) {
-        setFormError("Please enter your Team / Registration ID");
-        return;
-      }
-      if (!mName) {
-        setFormError("Please enter your full name");
-        return;
-      }
-      if (!colName) {
-        setFormError("Please enter your college name");
-        return;
-      }
+    if (!selectedTeam) {
+      setFormError("Please select your team from the dropdown search");
+      return;
     }
+    if (!selectedMember) {
+      setFormError("Please select your name from the team members list");
+      return;
+    }
+    const colName = formData.college_name.trim();
+    if (!colName) {
+      setFormError("Please enter your college name");
+      return;
+    }
+    if (!futurePlan) {
+      setFormError("Please select your future plan");
+      return;
+    }
+    if (futurePlan === "Others (please specify)" && !futurePlanOther.trim()) {
+      setFormError("Please specify your future plan");
+      return;
+    }
+
+    const regId = selectedTeam.registration_id.trim();
+    const tName = selectedTeam.team_name.trim();
+    const mName = selectedMember.member_name.trim();
+    const role = selectedMember.role.trim();
+    const resolvedFuturePlan =
+      futurePlan === "Others (please specify)"
+        ? `Others: ${futurePlanOther.trim()}`
+        : futurePlan;
 
     setSubmitting(true);
 
@@ -290,6 +290,7 @@ export default function HomePage() {
           member_name: mName,
           role: role,
           college_name: colName,
+          future_plan: resolvedFuturePlan,
         }),
       });
 
@@ -572,20 +573,6 @@ export default function HomePage() {
         {mobileMenuOpen && (
           <div className="lg:hidden bg-white border-b border-slate-200 px-4 pt-2 pb-5 space-y-2 shadow-lg">
             <a
-              href="#about"
-              onClick={() => setMobileMenuOpen(false)}
-              className="block px-3 py-2 rounded-md font-mono text-xs uppercase text-slate-700 hover:bg-slate-100"
-            >
-              About
-            </a>
-            <a
-              href="#tracks"
-              onClick={() => setMobileMenuOpen(false)}
-              className="block px-3 py-2 rounded-md font-mono text-xs uppercase text-slate-700 hover:bg-slate-100"
-            >
-              Tracks
-            </a>
-            <a
               href="#timeline"
               onClick={() => setMobileMenuOpen(false)}
               className="block px-3 py-2 rounded-md font-mono text-xs uppercase text-slate-700 hover:bg-slate-100"
@@ -605,20 +592,6 @@ export default function HomePage() {
               className="block px-3 py-2 rounded-md font-mono text-xs uppercase text-slate-700 hover:bg-slate-100"
             >
               Leaderboard
-            </a>
-            <a
-              href="#gallery"
-              onClick={() => setMobileMenuOpen(false)}
-              className="block px-3 py-2 rounded-md font-mono text-xs uppercase text-slate-700 hover:bg-slate-100"
-            >
-              Archive
-            </a>
-            <a
-              href="#sponsors"
-              onClick={() => setMobileMenuOpen(false)}
-              className="block px-3 py-2 rounded-md font-mono text-xs uppercase text-slate-700 hover:bg-slate-100"
-            >
-              Partners
             </a>
             <a
               href="#faq"
@@ -1223,118 +1196,89 @@ export default function HomePage() {
             <form onSubmit={handleStart} className="space-y-4">
               {/* Step 1: Searchable Team Dropdown */}
               <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="block text-xs font-mono font-semibold uppercase text-slate-700">
-                    Step 1: Select Team <span className="text-red-500">*</span>
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setManualMode(!manualMode);
-                      setFormError("");
-                    }}
-                    className="text-[11px] font-mono text-teal-700 hover:text-teal-900 underline cursor-pointer"
-                  >
-                    {manualMode ? "← Use Dropdown Search" : "Manual ID Entry"}
-                  </button>
-                </div>
+                <label className="block text-xs font-mono font-semibold uppercase text-slate-700 mb-1.5">
+                  Step 1: Select Team <span className="text-red-500">*</span>
+                </label>
 
-                {!manualMode ? (
+                <div className="relative">
                   <div className="relative">
-                    <div className="relative">
-                      <input
-                        type="text"
-                        placeholder="Search Registration ID or Team Name (e.g. TRI26004 or Ruhan)..."
-                        value={teamSearchInput}
-                        onChange={(e) => {
-                          setTeamSearchInput(e.target.value);
-                          setIsDropdownOpen(true);
-                          if (selectedTeam) {
-                            setSelectedTeam(null);
-                            setSelectedMember(null);
-                            setTeamMembers([]);
-                          }
-                        }}
-                        onFocus={() => setIsDropdownOpen(true)}
-                        className="input-field text-xs pr-9"
-                      />
-                      {loadingTeams && (
-                        <div className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 border-2 border-teal-600 border-t-transparent rounded-full animate-spin" />
-                      )}
-                    </div>
-
-                    {/* Live Search Results Dropdown */}
-                    {isDropdownOpen && (
-                      <div className="absolute z-50 left-0 right-0 mt-1 max-h-52 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-xl py-1 divide-y divide-slate-100">
-                        {teamOptions.length > 0 ? (
-                          teamOptions.map((t) => (
-                            <button
-                              key={t.registration_id}
-                              type="button"
-                              onClick={() => handleSelectTeam(t)}
-                              className="w-full text-left px-3.5 py-2.5 hover:bg-teal-50 transition-colors flex items-center justify-between group"
-                            >
-                              <div>
-                                <span className="font-mono font-bold text-xs text-teal-800 group-hover:text-teal-900 block">
-                                  {t.registration_id} - {t.team_name}
-                                </span>
-                              </div>
-                              <span className="text-[10px] font-mono font-semibold text-slate-400 group-hover:text-teal-700">
-                                Select →
-                              </span>
-                            </button>
-                          ))
-                        ) : (
-                          <div className="p-3 text-center text-xs font-mono text-slate-400">
-                            {loadingTeams
-                              ? "Searching teams..."
-                              : "No registered teams found. Type to search or use manual entry."}
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {selectedTeam && (
-                      <div className="mt-2 p-2 rounded-lg bg-teal-50/80 border border-teal-200/80 flex items-center justify-between text-xs font-mono text-teal-900">
-                        <span>
-                          Team: <strong>{selectedTeam.registration_id} - {selectedTeam.team_name}</strong>
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSelectedTeam(null);
-                            setSelectedMember(null);
-                            setTeamMembers([]);
-                            setTeamSearchInput("");
-                            setIsDropdownOpen(true);
-                          }}
-                          className="text-[10px] text-teal-700 hover:text-teal-950 font-bold ml-2 underline"
-                        >
-                          Change
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <div>
                     <input
                       type="text"
-                      placeholder="e.g. TRI-01 or TRI26004"
-                      value={formData.team_id}
-                      onChange={(e) =>
-                        setFormData((prev) => ({ ...prev, team_id: e.target.value.toUpperCase() }))
-                      }
-                      className="input-field text-xs uppercase font-mono"
+                      placeholder="Search Registration ID or Team Name (e.g. TRI26004 or Ruhan)..."
+                      value={teamSearchInput}
+                      onChange={(e) => {
+                        setTeamSearchInput(e.target.value);
+                        setIsDropdownOpen(true);
+                        if (selectedTeam) {
+                          setSelectedTeam(null);
+                          setSelectedMember(null);
+                          setTeamMembers([]);
+                        }
+                      }}
+                      onFocus={() => setIsDropdownOpen(true)}
+                      className="input-field text-xs pr-9"
                     />
-                    <p className="text-[11px] font-mono text-slate-500 mt-1">
-                      Enter your registration or team identifier.
-                    </p>
+                    {loadingTeams && (
+                      <div className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 border-2 border-teal-600 border-t-transparent rounded-full animate-spin" />
+                    )}
                   </div>
-                )}
+
+                  {/* Live Search Results Dropdown */}
+                  {isDropdownOpen && (
+                    <div className="absolute z-50 left-0 right-0 mt-1 max-h-52 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-xl py-1 divide-y divide-slate-100">
+                      {teamOptions.length > 0 ? (
+                        teamOptions.map((t) => (
+                          <button
+                            key={t.registration_id}
+                            type="button"
+                            onClick={() => handleSelectTeam(t)}
+                            className="w-full text-left px-3.5 py-2.5 hover:bg-teal-50 transition-colors flex items-center justify-between group cursor-pointer"
+                          >
+                            <div>
+                              <span className="font-mono font-bold text-xs text-teal-800 group-hover:text-teal-900 block">
+                                {t.registration_id} - {t.team_name}
+                              </span>
+                            </div>
+                            <span className="text-[10px] font-mono font-semibold text-slate-400 group-hover:text-teal-700">
+                              Select →
+                            </span>
+                          </button>
+                        ))
+                      ) : (
+                        <div className="p-3 text-center text-xs font-mono text-slate-400">
+                          {loadingTeams
+                            ? "Searching teams..."
+                            : "No registered teams found. Please check your spelling."}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {selectedTeam && (
+                    <div className="mt-2 p-2 rounded-lg bg-teal-50/80 border border-teal-200/80 flex items-center justify-between text-xs font-mono text-teal-900">
+                      <span>
+                        Team: <strong>{selectedTeam.registration_id} - {selectedTeam.team_name}</strong>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedTeam(null);
+                          setSelectedMember(null);
+                          setTeamMembers([]);
+                          setTeamSearchInput("");
+                          setIsDropdownOpen(true);
+                        }}
+                        className="text-[10px] text-teal-700 hover:text-teal-950 font-bold ml-2 underline cursor-pointer"
+                      >
+                        Change
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
 
-              {/* Step 2 & 3: Member Selection (name + role) */}
-              {!manualMode && selectedTeam && (
+              {/* Step 2: Member Selection (name + role) */}
+              {selectedTeam && (
                 <div>
                   <label className="block text-xs font-mono font-semibold uppercase text-slate-700 mb-1.5">
                     Step 2: Select Your Name <span className="text-red-500">*</span>
@@ -1391,26 +1335,7 @@ export default function HomePage() {
                 </div>
               )}
 
-              {/* Manual Mode Member Name Input */}
-              {manualMode && (
-                <div>
-                  <label className="block text-xs font-mono font-semibold uppercase text-slate-700 mb-1.5">
-                    Your Full Name <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="e.g. Rahul Sharma"
-                    value={formData.member_name}
-                    onChange={(e) =>
-                      setFormData((prev) => ({ ...prev, member_name: e.target.value }))
-                    }
-                    className="input-field text-xs"
-                  />
-                </div>
-              )}
-
-              {/* Step 4: College / Institution Name */}
+              {/* Step 3: College / Institution Name */}
               <div>
                 <label className="block text-xs font-mono font-semibold uppercase text-slate-700 mb-1.5">
                   Step 3: College / Institution Name <span className="text-red-500">*</span>
@@ -1425,6 +1350,48 @@ export default function HomePage() {
                   }
                   className="input-field text-xs"
                 />
+              </div>
+
+              {/* Step 4: What is your future plan? */}
+              <div>
+                <label className="block text-xs font-mono font-semibold uppercase text-slate-700 mb-1.5">
+                  Step 4: What is your future plan? <span className="text-red-500">*</span>
+                </label>
+                <select
+                  value={futurePlan}
+                  onChange={(e) => {
+                    setFuturePlan(e.target.value);
+                    if (e.target.value !== "Others (please specify)") {
+                      setFuturePlanOther("");
+                    }
+                  }}
+                  required
+                  className="input-field text-xs cursor-pointer bg-white"
+                >
+                  <option value="" disabled>-- Select your future plan --</option>
+                  {FUTURE_PLAN_OPTIONS.map((opt) => (
+                    <option key={opt} value={opt}>
+                      {opt}
+                    </option>
+                  ))}
+                </select>
+
+                {futurePlan === "Others (please specify)" && (
+                  <div className="mt-2.5">
+                    <label className="block text-[11px] font-mono font-medium text-slate-600 mb-1">
+                      Please specify your plan <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="e.g. Preparing for Civil Services, Research..."
+                      value={futurePlanOther}
+                      onChange={(e) => setFuturePlanOther(e.target.value)}
+                      className="input-field text-xs"
+                      autoFocus
+                    />
+                  </div>
+                )}
               </div>
 
               {formError && (

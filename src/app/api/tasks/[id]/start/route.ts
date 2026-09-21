@@ -19,6 +19,7 @@ export async function POST(
   const rawCollegeName = (body.college_name || "") as string;
   const rawTeamName = (body.team_name || "") as string;
   const rawRole = (body.role || "") as string;
+  const rawFuturePlan = (body.future_plan || "") as string;
 
   if (!rawTeamId || typeof rawTeamId !== "string" || rawTeamId.trim().length === 0) {
     return NextResponse.json({ error: "Registration / Team ID is required" }, { status: 400 });
@@ -32,6 +33,10 @@ export async function POST(
 
   if (!rawCollegeName || typeof rawCollegeName !== "string" || rawCollegeName.trim().length === 0) {
     return NextResponse.json({ error: "College name is required" }, { status: 400 });
+  }
+
+  if (!rawFuturePlan || typeof rawFuturePlan !== "string" || rawFuturePlan.trim().length === 0) {
+    return NextResponse.json({ error: "Future plan is required" }, { status: 400 });
   }
 
   const supabase = getSupabase();
@@ -111,6 +116,11 @@ export async function POST(
     });
   }
   cookieStore.set("college_name", trimmedCollege, {
+    path: "/",
+    maxAge: 60 * 60 * 24 * 7,
+    sameSite: "lax",
+  });
+  cookieStore.set("future_plan", rawFuturePlan.trim(), {
     path: "/",
     maxAge: 60 * 60 * 24 * 7,
     sameSite: "lax",

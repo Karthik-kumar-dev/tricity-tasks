@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS submissions (
   member_name             TEXT NOT NULL,
   member_name_normalized  TEXT NOT NULL,
   college_name            TEXT,
+  future_plan             TEXT,
   task_id                 INT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
   answer                  TEXT NOT NULL,
   link                    TEXT,
@@ -41,6 +42,7 @@ CREATE TABLE IF NOT EXISTS submissions (
 
 -- If you already have an existing submissions table, run this migration in Supabase SQL Editor:
 -- ALTER TABLE submissions ADD COLUMN IF NOT EXISTS college_name TEXT;
+-- ALTER TABLE submissions ADD COLUMN IF NOT EXISTS future_plan TEXT;
 
 -- Index for fast team lookups
 CREATE INDEX IF NOT EXISTS idx_submissions_team_id ON submissions(team_id);

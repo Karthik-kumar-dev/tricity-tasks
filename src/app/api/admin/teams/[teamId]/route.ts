@@ -20,20 +20,29 @@ export async function GET(
 
   let { data: submissions, error } = await supabase
     .from("submissions")
-    .select("id, member_name, college_name, task_id, answer, link, score, created_at")
+    .select("id, member_name, college_name, future_plan, task_id, answer, link, score, created_at")
     .eq("team_id", decodedTeamId)
     .order("task_id", { ascending: true })
     .order("member_name", { ascending: true });
 
-  // Fallback if college_name column does not exist yet in Supabase
-  if (error && (error.code === "42703" || error.message?.includes("college_name"))) {
+  // Fallback if future_plan or college_name column does not exist yet in Supabase
+  if (
+    error &&
+    (error.code === "42703" ||
+      error.message?.includes("future_plan") ||
+      error.message?.includes("college_name"))
+  ) {
     const retry = await supabase
       .from("submissions")
       .select("id, member_name, task_id, answer, link, score, created_at")
       .eq("team_id", decodedTeamId)
       .order("task_id", { ascending: true })
       .order("member_name", { ascending: true });
-    submissions = (retry.data || []).map((s) => ({ ...s, college_name: null }));
+    submissions = (retry.data || []).map((s) => ({
+      ...s,
+      college_name: null,
+      future_plan: null,
+    }));
     error = retry.error;
   }
 

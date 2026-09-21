@@ -5,6 +5,15 @@ export const MAX_SCORE = 100;
 export const TASK_POINTS = 20;
 export const TOTAL_TASKS = 5;
 
+export const FUTURE_PLAN_OPTIONS = [
+  "Study abroad",
+  "Study in India (M.Tech/MBA)",
+  "Placement / job in India",
+  "Entrepreneurship",
+  "Upskilling",
+  "Others (please specify)",
+] as const;
+
 /**
  * Cleanly round to at most 1 decimal place with no floating point noise (e.g. 19.999 -> 20)
  */

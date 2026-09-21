@@ -8,7 +8,7 @@ const POSTER_TASK_ID = 1;
 
 function readIdentityFromCookies() {
   if (typeof document === "undefined") {
-    return { team_id: "", member_name: "", college_name: "" };
+    return { team_id: "", member_name: "", college_name: "", future_plan: "" };
   }
   const cookies = document.cookie.split("; ").reduce((acc, c) => {
     const [key, ...val] = c.split("=");
@@ -19,6 +19,7 @@ function readIdentityFromCookies() {
     team_id: cookies.team_id || "",
     member_name: cookies.member_name || "",
     college_name: cookies.college_name || "",
+    future_plan: cookies.future_plan || "",
   };
 }
 
@@ -42,6 +43,7 @@ export default function TaskPage({ params }: { params: Promise<{ id: string }> }
     team_id: "",
     member_name: "",
     college_name: "",
+    future_plan: "",
   });
 
   // Submission form state
@@ -50,6 +52,42 @@ export default function TaskPage({ params }: { params: Promise<{ id: string }> }
   const [submitError, setSubmitError] = useState("");
   const [submitSuccess, setSubmitSuccess] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+
+  // Refer a Friend State
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const REFER_URL = "https://centle.in/tricity";
+  const REFER_TEXT =
+    "Join the Tri-City Hackathon 2K26! Compete with student innovators, solve challenges, and win exciting prizes. Register here:";
+
+  async function handleShare() {
+    if (typeof navigator !== "undefined" && navigator.share) {
+      try {
+        await navigator.share({
+          title: "Tri-City Hackathon 2K26 – Register Now",
+          text: REFER_TEXT,
+          url: REFER_URL,
+        });
+        return;
+      } catch (err: unknown) {
+        if ((err as Error)?.name !== "AbortError") {
+          setShowShareModal(true);
+        }
+        return;
+      }
+    }
+    setShowShareModal(true);
+  }
+
+  function handleCopyLink() {
+    if (typeof navigator !== "undefined" && navigator.clipboard) {
+      navigator.clipboard.writeText(REFER_URL).then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2500);
+      });
+    }
+  }
 
   useEffect(() => {
     setMounted(true);
@@ -70,6 +108,7 @@ export default function TaskPage({ params }: { params: Promise<{ id: string }> }
         team_id: idInfo.team_id,
         member_name: idInfo.member_name,
         college_name: idInfo.college_name,
+        future_plan: idInfo.future_plan,
       }),
     })
       .then((res) => res.json())
@@ -98,6 +137,7 @@ export default function TaskPage({ params }: { params: Promise<{ id: string }> }
           team_id: identity.team_id,
           member_name: identity.member_name,
           college_name: identity.college_name,
+          future_plan: identity.future_plan,
           answer,
           link: link || undefined,
         }),
@@ -170,6 +210,17 @@ export default function TaskPage({ params }: { params: Promise<{ id: string }> }
           </Link>
 
           <div className="flex items-center gap-2.5">
+            <button
+              type="button"
+              onClick={handleShare}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-emerald-800 text-xs font-mono font-bold transition-all shadow-2xs hover:shadow-xs cursor-pointer active:scale-98"
+              title="Refer your friend – Register now"
+            >
+              <span>🎁</span>
+              <span className="hidden sm:inline">Refer your friend –</span>
+              <span>Register now</span>
+            </button>
+
             <span className="w-2 h-2 rounded-full bg-teal-600 animate-pulse" />
             <div className="px-3 py-1 rounded-lg bg-teal-50 border border-teal-200 text-teal-800 text-xs font-mono font-bold flex items-center gap-1.5 flex-wrap">
               <span>{identity.team_id}</span>
@@ -187,7 +238,32 @@ export default function TaskPage({ params }: { params: Promise<{ id: string }> }
       </header>
 
       {/* ── Main Workspace ── */}
-      <main className="flex-1 max-w-4xl mx-auto px-4 sm:px-6 py-10 w-full">
+      <main className="flex-1 max-w-4xl mx-auto px-4 sm:px-6 py-8 sm:py-10 w-full">
+        {/* Referral Callout Banner */}
+        <div className="mb-6 rounded-2xl p-4 sm:p-5 bg-gradient-to-r from-teal-500/10 via-emerald-500/10 to-teal-500/10 border border-teal-200/90 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-teal-600 to-emerald-600 text-white flex items-center justify-center text-lg shadow-xs shrink-0">
+              🎁
+            </div>
+            <div>
+              <h4 className="font-heading font-bold text-sm text-slate-900">
+                Know someone who should join the Hackathon?
+              </h4>
+              <p className="text-xs text-slate-600 font-display">
+                Share Tri-City Hackathon with your friends &amp; classmates: <strong>https://centle.in/tricity</strong>
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={handleShare}
+            className="btn-primary text-xs py-2 px-4 whitespace-nowrap shrink-0 shadow-xs cursor-pointer inline-flex items-center gap-1.5"
+          >
+            <span>Refer your friend – Register now</span>
+            <span>→</span>
+          </button>
+        </div>
+
         {/* Task Header Card */}
         <div className="pro-card rounded-2xl p-6 sm:p-8 bg-white mb-8">
           <div className="flex items-center gap-2 mb-3">
@@ -346,6 +422,109 @@ export default function TaskPage({ params }: { params: Promise<{ id: string }> }
       <footer className="border-t border-slate-200 bg-white py-6 text-center text-xs font-mono text-slate-400">
         Tri-City Hackathon Workspace · Warangal · Hanamkonda · Kazipet
       </footer>
+
+      {/* ── Refer A Friend Share Modal ── */}
+      {showShareModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+          <div className="relative w-full max-w-md bg-white rounded-2xl p-6 sm:p-7 shadow-2xl border border-slate-200">
+            <button
+              onClick={() => setShowShareModal(false)}
+              className="absolute top-5 right-5 text-slate-400 hover:text-slate-700 text-lg font-mono cursor-pointer"
+            >
+              ✕
+            </button>
+
+            <div className="w-12 h-12 rounded-xl bg-teal-50 border border-teal-200 text-teal-700 flex items-center justify-center text-2xl mb-4 shadow-2xs">
+              🎁
+            </div>
+
+            <h3 className="font-heading font-bold text-xl text-slate-900 mb-1">
+              Refer Your Friend – Register Now
+            </h3>
+            <p className="text-xs text-slate-600 mb-5 font-display leading-relaxed">
+              Invite your friends to participate in the Tri-City Hackathon 2K26. Share the registration link directly or copy it below!
+            </p>
+
+            {/* Quick Share Links */}
+            <div className="grid grid-cols-2 gap-2.5 mb-5">
+              <a
+                href={`https://api.whatsapp.com/send?text=${encodeURIComponent(REFER_TEXT + " " + REFER_URL)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center justify-center gap-2 p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-mono font-bold hover:bg-emerald-100 transition-colors shadow-2xs"
+              >
+                <span>💬</span> WhatsApp
+              </a>
+              <a
+                href={`https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(REFER_URL)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center justify-center gap-2 p-2.5 rounded-xl bg-blue-50 border border-blue-200 text-blue-800 text-xs font-mono font-bold hover:bg-blue-100 transition-colors shadow-2xs"
+              >
+                <span>💼</span> LinkedIn
+              </a>
+              <a
+                href={`https://t.me/share/url?url=${encodeURIComponent(REFER_URL)}&text=${encodeURIComponent(REFER_TEXT)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center justify-center gap-2 p-2.5 rounded-xl bg-sky-50 border border-sky-200 text-sky-800 text-xs font-mono font-bold hover:bg-sky-100 transition-colors shadow-2xs"
+              >
+                <span>✈️</span> Telegram
+              </a>
+              <a
+                href={`https://twitter.com/intent/tweet?text=${encodeURIComponent(REFER_TEXT)}&url=${encodeURIComponent(REFER_URL)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center justify-center gap-2 p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-800 text-xs font-mono font-bold hover:bg-slate-100 transition-colors shadow-2xs"
+              >
+                <span>🐦</span> X / Twitter
+              </a>
+            </div>
+
+            {/* Direct Link Copy */}
+            <div>
+              <label className="block text-[11px] font-mono font-semibold uppercase text-slate-700 mb-1.5">
+                Or copy registration URL
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  readOnly
+                  value={REFER_URL}
+                  className="input-field text-xs bg-slate-50 font-mono text-slate-600 select-all"
+                />
+                <button
+                  type="button"
+                  onClick={handleCopyLink}
+                  className={`btn-primary text-xs py-2.5 px-4 whitespace-nowrap cursor-pointer transition-all ${
+                    copied ? "!bg-emerald-600 !border-emerald-600 text-white" : ""
+                  }`}
+                >
+                  {copied ? "✓ Copied!" : "Copy"}
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-6 pt-4 border-t border-slate-100 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setShowShareModal(false)}
+                className="btn-secondary text-xs py-2 px-5 cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Copied Toast Notification ── */}
+      {copied && !showShareModal && (
+        <div className="fixed bottom-6 right-6 z-50 bg-slate-900 text-white px-4 py-3 rounded-xl shadow-xl border border-slate-800 flex items-center gap-2.5 text-xs font-mono">
+          <span className="text-emerald-400 font-bold">✓</span>
+          <span>Registration link copied to clipboard!</span>
+        </div>
+      )}
     </div>
   );
 }
