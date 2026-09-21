@@ -6,6 +6,7 @@ export interface SubmissionRow {
   member_name: string;
   member_name_normalized?: string;
   college_name?: string | null;
+  future_plan?: string | null;
   task_id: number;
   score: number | null;
   answer?: string;

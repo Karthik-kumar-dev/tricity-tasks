@@ -179,6 +179,7 @@ interface Props {
   teamId: string;
   memberName: string; // cookie default
   collegeName: string; // cookie default
+  futurePlan?: string;
   rules?: string | null;
   customTemplate?: string | null;
   customInstagramTemplate?: string | null;
@@ -188,6 +189,7 @@ export default function Task1PosterFlow({
   teamId,
   memberName,
   collegeName,
+  futurePlan,
   rules,
   customTemplate,
   customInstagramTemplate,
@@ -540,6 +542,7 @@ export default function Task1PosterFlow({
           team_id: teamId,
           member_name: memberName || name,
           college_name: collegeName || college,
+          future_plan: futurePlan || undefined,
           instagram_url: iUrl,
           linkedin_url: lUrl,
           link: iUrl,

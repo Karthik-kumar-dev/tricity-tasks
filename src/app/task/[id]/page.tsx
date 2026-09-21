@@ -318,6 +318,7 @@ export default function TaskPage({ params }: { params: Promise<{ id: string }> }
             teamId={identity.team_id}
             memberName={identity.member_name}
             collegeName={identity.college_name}
+            futurePlan={identity.future_plan}
             rules={task.rules}
             customTemplate={task.linkedin_template}
             customInstagramTemplate={task.instagram_template}

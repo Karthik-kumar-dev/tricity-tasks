@@ -44,19 +44,36 @@ function buildRowsFromSubmissions(
 }
 
 function buildLeaderboardRows(
-  submissions: SubmissionRow[],
+  submissions: (SubmissionRow & { future_plan?: string | null })[],
   registrations: RegistrationRow[] = []
 ): (string | number)[][] {
   const teams = computeTeamScores(submissions, registrations);
 
-  return teams.map((t, i) => [
-    i + 1,
-    t.team_id,
-    t.member_count,
-    t.submission_count,
-    t.avg_score === null ? "Not scored" : t.avg_score,
-    t.total_score,
-  ]);
+  // Collect future plans for each team
+  const teamPlans = new Map<string, Set<string>>();
+  for (const s of submissions) {
+    if (s.future_plan && s.future_plan.trim() && s.future_plan !== "—") {
+      const k = s.team_id.trim().toUpperCase();
+      const plans = teamPlans.get(k) || new Set<string>();
+      plans.add(s.future_plan.trim());
+      teamPlans.set(k, plans);
+    }
+  }
+
+  return teams.map((t, i) => {
+    const plans = teamPlans.get(t.team_id.trim().toUpperCase());
+    const plansStr = plans && plans.size > 0 ? Array.from(plans).join(", ") : "—";
+
+    return [
+      i + 1,
+      t.team_id,
+      t.member_count,
+      plansStr,
+      t.submission_count,
+      t.avg_score === null ? "Not scored" : t.avg_score,
+      t.total_score,
+    ];
+  });
 }
 
 function styleSheet(
@@ -116,7 +133,7 @@ export async function GET(request: NextRequest) {
 
   let query = supabase
     .from("submissions")
-    .select("team_id, member_name, college_name, task_id, answer, link, score, created_at");
+    .select("team_id, member_name, college_name, future_plan, task_id, answer, link, score, created_at");
 
   if (taskId) {
     const parsed = parseInt(taskId, 10);
@@ -167,10 +184,39 @@ export async function GET(request: NextRequest) {
   ]);
   const taskMap = new Map((tasks || []).map((t) => [t.id, t.title]));
 
-  const enriched = (submissions || []).map((s) => ({
-    ...s,
-    task_title: taskMap.get(s.task_id) || `Task ${s.task_id}`,
-  }));
+  // Build a lookup map of known future plans per team+member and per team
+  const planByMemberKey = new Map<string, string>();
+  const planByTeam = new Map<string, string>();
+  for (const s of submissions || []) {
+    if (s.future_plan && typeof s.future_plan === "string" && s.future_plan.trim() && s.future_plan !== "—") {
+      const plan = s.future_plan.trim();
+      const memberKey = `${(s.team_id || "").toUpperCase().trim()}:::${(s.member_name || "").toLowerCase().trim()}`;
+      if (!planByMemberKey.has(memberKey)) {
+        planByMemberKey.set(memberKey, plan);
+      }
+      const teamKey = (s.team_id || "").toUpperCase().trim();
+      if (!planByTeam.has(teamKey)) {
+        planByTeam.set(teamKey, plan);
+      }
+    }
+  }
+
+  const enriched = (submissions || []).map((s) => {
+    const memberKey = `${(s.team_id || "").toUpperCase().trim()}:::${(s.member_name || "").toLowerCase().trim()}`;
+    const teamKey = (s.team_id || "").toUpperCase().trim();
+    const resolvedPlan =
+      (s.future_plan && typeof s.future_plan === "string" && s.future_plan.trim() && s.future_plan !== "—")
+        ? s.future_plan.trim()
+        : planByMemberKey.get(memberKey) ||
+          planByTeam.get(teamKey) ||
+          null;
+
+    return {
+      ...s,
+      future_plan: resolvedPlan,
+      task_title: taskMap.get(s.task_id) || `Task ${s.task_id}`,
+    };
+  });
 
   // ── Build workbook ──
   const wb = XLSX.utils.book_new();
@@ -197,6 +243,7 @@ export async function GET(request: NextRequest) {
     "Rank",
     "Team ID",
     "Members",
+    "Future Plans",
     "Submissions",
     `Avg / Task (Max ${TASK_POINTS})`,
     `Total Score (Max ${MAX_SCORE})`,
