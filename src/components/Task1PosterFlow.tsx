@@ -44,11 +44,6 @@ const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp"];
 const CROP_SIZE = 540; // px output of the cropper (square, 1:1)
 const POSTER_TASK_ID = 1;
 
-// Accepts: https://www.linkedin.com/posts/... or /feed/update/...
-const LINKEDIN_URL_RE = /^https:\/\/(www\.)?linkedin\.com\/(posts|feed\/update)\//i;
-// Accepts: https://www.instagram.com/p/... or /reel/... or /...
-const INSTAGRAM_URL_RE = /^https:\/\/(www\.)?instagram\.com\/[a-zA-Z0-9_\-\.\/]+/i;
-
 /* ─────────────────────────────────────────────────────────────
    Helpers
    ───────────────────────────────────────────────────────────── */
@@ -254,10 +249,10 @@ export default function Task1PosterFlow({
         setAlreadySubmitted(true);
         const insta =
           data.instagram_url ||
-          (data.link && INSTAGRAM_URL_RE.test(data.link) ? data.link : null);
+          (data.link && /instagram/i.test(data.link) ? data.link : null);
         const linked =
           data.linkedin_url ||
-          (data.link && LINKEDIN_URL_RE.test(data.link) ? data.link : null);
+          (data.link && (!data.instagram_url || /linkedin/i.test(data.link)) ? data.link : null);
         setSavedInstagramLink(insta);
         setSavedLinkedInLink(linked);
         setInstagramUrl(insta || "");
@@ -492,15 +487,6 @@ export default function Task1PosterFlow({
     }
   }
 
-  /* ── Validation helpers ── */
-  function validateLinkedInUrl(value: string): boolean {
-    return LINKEDIN_URL_RE.test(value.trim());
-  }
-
-  function validateInstagramUrl(value: string): boolean {
-    return INSTAGRAM_URL_RE.test(value.trim());
-  }
-
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setInstagramError("");
@@ -511,23 +497,9 @@ export default function Task1PosterFlow({
     const lUrl = linkedInUrl.trim();
 
     let hasError = false;
-    if (!iUrl) {
-      setInstagramError("Please paste the public URL of your Instagram post or reel.");
-      hasError = true;
-    } else if (!validateInstagramUrl(iUrl)) {
-      setInstagramError(
-        "That doesn't look like an Instagram URL. Use the format: https://www.instagram.com/p/... or https://www.instagram.com/reel/..."
-      );
-      hasError = true;
-    }
 
     if (!lUrl) {
-      setLinkedInError("Please paste the public URL of your LinkedIn post.");
-      hasError = true;
-    } else if (!validateLinkedInUrl(lUrl)) {
-      setLinkedInError(
-        "That doesn't look like a LinkedIn post URL. Use the format: https://www.linkedin.com/posts/... or https://www.linkedin.com/feed/update/..."
-      );
+      setLinkedInError("Please paste your LinkedIn post link.");
       hasError = true;
     }
 
@@ -545,7 +517,7 @@ export default function Task1PosterFlow({
           future_plan: futurePlan || undefined,
           instagram_url: iUrl,
           linkedin_url: lUrl,
-          link: iUrl,
+          link: lUrl || iUrl,
         }),
       });
       const data = await res.json();
@@ -810,7 +782,7 @@ export default function Task1PosterFlow({
           </h3>
         </div>
         <p className="text-xs text-slate-500 mb-4 font-display leading-relaxed">
-          Post your poster on both Instagram and LinkedIn. Select a platform below to view and copy its ready-made caption.
+          Post your poster on LinkedIn (mandatory) and Instagram (optional). Select a platform below to view and copy its ready-made caption.
         </p>
 
         {/* Platform Selector Tabs */}
@@ -887,37 +859,45 @@ export default function Task1PosterFlow({
               Task 1 Completed!
             </div>
             <p className="text-xs text-emerald-800 font-display leading-relaxed mb-4">
-              Your Instagram and LinkedIn post links have been saved. Admins can now verify and award points.
+              Your post links have been saved. Admins can now verify and award points.
             </p>
 
             <div className="space-y-2 mb-4">
-              {savedInstagramLink && (
-                <div className="p-3 rounded-lg bg-white/80 border border-emerald-200/80">
-                  <span className="block text-[10px] font-mono uppercase tracking-wider text-slate-500 font-semibold mb-1">
-                    📸 Instagram Post / Reel URL
-                  </span>
-                  <a
-                    href={savedInstagramLink}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="block text-xs font-mono text-rose-700 hover:underline break-all font-semibold"
-                  >
-                    {savedInstagramLink}
-                  </a>
-                </div>
-              )}
               {savedLinkedInLink && (
                 <div className="p-3 rounded-lg bg-white/80 border border-emerald-200/80">
                   <span className="block text-[10px] font-mono uppercase tracking-wider text-slate-500 font-semibold mb-1">
                     💼 LinkedIn Post URL
                   </span>
                   <a
-                    href={savedLinkedInLink}
+                    href={
+                      savedLinkedInLink.startsWith("http://") || savedLinkedInLink.startsWith("https://")
+                        ? savedLinkedInLink
+                        : `https://${savedLinkedInLink}`
+                    }
                     target="_blank"
                     rel="noopener noreferrer"
                     className="block text-xs font-mono text-blue-700 hover:underline break-all font-semibold"
                   >
                     {savedLinkedInLink}
+                  </a>
+                </div>
+              )}
+              {savedInstagramLink && (
+                <div className="p-3 rounded-lg bg-white/80 border border-emerald-200/80">
+                  <span className="block text-[10px] font-mono uppercase tracking-wider text-slate-500 font-semibold mb-1">
+                    📸 Instagram Post / Reel URL
+                  </span>
+                  <a
+                    href={
+                      savedInstagramLink.startsWith("http://") || savedInstagramLink.startsWith("https://")
+                        ? savedInstagramLink
+                        : `https://${savedInstagramLink}`
+                    }
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block text-xs font-mono text-rose-700 hover:underline break-all font-semibold"
+                  >
+                    {savedInstagramLink}
                   </a>
                 </div>
               )}
@@ -934,47 +914,22 @@ export default function Task1PosterFlow({
         ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
             <p className="text-xs text-slate-500 font-display leading-relaxed">
-              Both links are required to complete Task 1 verification.
+              LinkedIn post link is required. Instagram link is optional.
             </p>
-
-            {/* Instagram URL Field */}
-            <div>
-              <label className="block text-xs font-mono font-semibold uppercase text-slate-700 mb-2">
-                📸 Public Instagram Post / Reel URL <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="url"
-                value={instagramUrl}
-                onChange={(e) => {
-                  setInstagramUrl(e.target.value);
-                  setInstagramError("");
-                }}
-                placeholder="https://www.instagram.com/p/..."
-                className="input-field text-xs"
-              />
-              <p className="text-[11px] text-slate-400 font-display mt-1.5">
-                Open your post or reel on Instagram, tap Share (or three dots) and choose &quot;Copy link&quot; — then paste it here.
-              </p>
-              {instagramError && (
-                <div className="mt-2 p-3.5 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs font-mono">
-                  {instagramError}
-                </div>
-              )}
-            </div>
 
             {/* LinkedIn URL Field */}
             <div>
               <label className="block text-xs font-mono font-semibold uppercase text-slate-700 mb-2">
-                💼 Public LinkedIn Post URL <span className="text-red-500">*</span>
+                💼 LinkedIn Post URL <span className="text-red-500">*</span>
               </label>
               <input
-                type="url"
+                type="text"
                 value={linkedInUrl}
                 onChange={(e) => {
                   setLinkedInUrl(e.target.value);
                   setLinkedInError("");
                 }}
-                placeholder="https://www.linkedin.com/posts/..."
+                placeholder="https://www.linkedin.com/posts/... or paste link"
                 className="input-field text-xs"
               />
               <p className="text-[11px] text-slate-400 font-display mt-1.5">
@@ -983,6 +938,31 @@ export default function Task1PosterFlow({
               {linkedInError && (
                 <div className="mt-2 p-3.5 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs font-mono">
                   {linkedInError}
+                </div>
+              )}
+            </div>
+
+            {/* Instagram URL Field */}
+            <div>
+              <label className="block text-xs font-mono font-semibold uppercase text-slate-700 mb-2">
+                📸 Instagram Post / Reel URL <span className="text-slate-400 font-normal lowercase">(optional)</span>
+              </label>
+              <input
+                type="text"
+                value={instagramUrl}
+                onChange={(e) => {
+                  setInstagramUrl(e.target.value);
+                  setInstagramError("");
+                }}
+                placeholder="https://www.instagram.com/p/... or paste link"
+                className="input-field text-xs"
+              />
+              <p className="text-[11px] text-slate-400 font-display mt-1.5">
+                Open your post or reel on Instagram, tap Share (or three dots) and choose &quot;Copy link&quot; — then paste it here.
+              </p>
+              {instagramError && (
+                <div className="mt-2 p-3.5 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs font-mono">
+                  {instagramError}
                 </div>
               )}
             </div>

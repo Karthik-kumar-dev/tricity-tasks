@@ -39,8 +39,8 @@ export function getDefaultRules(taskId: number): string {
         "1. Profile Photo: Upload a high-quality front-facing photo and crop it to fit inside the circular badge frame.",
         "2. Participant Details: Ensure your full name and college name are spelled correctly before generating your badge.",
         "3. Download Poster: Generate and download the official high-resolution registration poster image.",
-        "4. Social Media Sharing: Post your poster to both Instagram and LinkedIn using the official ready-made captions. Tag @Tri-City Hackathon and @Centle.",
-        "5. Submit Post URLs: Copy and submit both your live Instagram post/reel link and your live LinkedIn post link below to claim your points.",
+        "4. Social Media Sharing: Share your poster on LinkedIn (mandatory) and Instagram (optional) using the official ready-made captions. Tag @Tri-City Hackathon and @Centle.",
+        "5. Submit Post URLs: Copy and submit your live LinkedIn post link (and optionally your Instagram post/reel link) below to claim your points.",
         "6. Verification & Fair Play: Each participant submits once. The posts must remain public until evaluations conclude. Invalid or broken URLs will be awarded zero points.",
       ].join("\n");
     case 2:

@@ -2,29 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabase } from "@/lib/supabase-server";
 import { cookies } from "next/headers";
 
-// Task 1 ("Share Your Registration Poster") requires both Instagram and LinkedIn post URLs.
+// Task 1 ("Share Your Registration Poster") requires LinkedIn post URL (Instagram is optional).
 const POSTER_TASK_ID = 1;
-
-// Accepted LinkedIn shapes:
-//   https://www.linkedin.com/posts/...   (post permalink)
-//   https://www.linkedin.com/feed/update/... (feed activity update)
-const LINKEDIN_URL_RE =
-  /^https:\/\/(www\.)?linkedin\.com\/(posts|feed\/update)\//i;
-
-function isLinkedInUrl(value: string): boolean {
-  return LINKEDIN_URL_RE.test(value.trim());
-}
-
-// Accepted Instagram shapes:
-//   https://www.instagram.com/p/...
-//   https://www.instagram.com/reel/...
-//   https://www.instagram.com/...
-const INSTAGRAM_URL_RE =
-  /^https:\/\/(www\.)?instagram\.com\/[a-zA-Z0-9_\-\.\/]+/i;
-
-function isInstagramUrl(value: string): boolean {
-  return INSTAGRAM_URL_RE.test(value.trim());
-}
 
 export async function POST(
   request: NextRequest,
@@ -72,27 +51,8 @@ export async function POST(
   let linkedUrl = (linkedin_url && typeof linkedin_url === "string" ? linkedin_url.trim() : "");
 
   if (isPosterTask) {
-    if (!instaUrl && linkStr && isInstagramUrl(linkStr)) {
-      instaUrl = linkStr;
-    }
-    if (!linkedUrl && linkStr && isLinkedInUrl(linkStr)) {
+    if (!linkedUrl && linkStr) {
       linkedUrl = linkStr;
-    }
-
-    if (!instaUrl) {
-      return NextResponse.json(
-        { error: "Instagram post URL is required for Task 1" },
-        { status: 400 }
-      );
-    }
-    if (!isInstagramUrl(instaUrl)) {
-      return NextResponse.json(
-        {
-          error:
-            "Please paste a valid public Instagram post or reel URL (e.g. https://www.instagram.com/p/... or https://www.instagram.com/reel/...)",
-        },
-        { status: 400 }
-      );
     }
 
     if (!linkedUrl) {
@@ -101,17 +61,8 @@ export async function POST(
         { status: 400 }
       );
     }
-    if (!isLinkedInUrl(linkedUrl)) {
-      return NextResponse.json(
-        {
-          error:
-            "Please paste a valid public LinkedIn post URL (e.g. https://www.linkedin.com/posts/... or https://www.linkedin.com/feed/update/...)",
-        },
-        { status: 400 }
-      );
-    }
 
-    linkStr = instaUrl;
+    linkStr = linkedUrl;
   } else {
     if (!answerStr && !linkStr) {
       return NextResponse.json({ error: "An answer or link is required" }, { status: 400 });
@@ -146,7 +97,9 @@ export async function POST(
       : null;
 
   const finalAnswer = isPosterTask
-    ? `Instagram: ${instaUrl}\nLinkedIn: ${linkedUrl}`
+    ? [instaUrl ? `Instagram: ${instaUrl}` : "", linkedUrl ? `LinkedIn: ${linkedUrl}` : ""]
+        .filter(Boolean)
+        .join("\n")
     : answerStr;
 
   const payload: Record<string, unknown> = {

@@ -39,18 +39,18 @@ export async function GET(
   let linkedin_url = "";
 
   if (existing.answer) {
-    const instaMatch = existing.answer.match(/Instagram:\s*(https:\/\/[^\s\n]+)/i);
-    if (instaMatch) instagram_url = instaMatch[1];
-    const linkedInMatch = existing.answer.match(/LinkedIn:\s*(https:\/\/[^\s\n]+)/i);
-    if (linkedInMatch) linkedin_url = linkedInMatch[1];
+    const instaMatch = existing.answer.match(/Instagram:\s*([^\r\n]+)/i);
+    if (instaMatch) instagram_url = instaMatch[1].trim();
+    const linkedInMatch = existing.answer.match(/LinkedIn:\s*([^\r\n]+)/i);
+    if (linkedInMatch) linkedin_url = linkedInMatch[1].trim();
   }
 
   if (existing.link) {
-    if (!instagram_url && /^https:\/\/(www\.)?instagram\.com\//i.test(existing.link)) {
-      instagram_url = existing.link;
+    if (!instagram_url && /instagram/i.test(existing.link)) {
+      instagram_url = existing.link.trim();
     }
-    if (!linkedin_url && /^https:\/\/(www\.)?linkedin\.com\//i.test(existing.link)) {
-      linkedin_url = existing.link;
+    if (!linkedin_url && (!instagram_url || /linkedin/i.test(existing.link))) {
+      linkedin_url = existing.link.trim();
     }
   }
 

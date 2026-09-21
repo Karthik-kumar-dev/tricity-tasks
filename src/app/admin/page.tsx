@@ -1453,24 +1453,26 @@ export default function AdminPage() {
                                 let instaUrl = "";
                                 let linkedUrl = "";
                                 if (sub.answer) {
-                                  const im = sub.answer.match(/Instagram:\s*(https:\/\/[^\s\n]+)/i);
-                                  if (im) instaUrl = im[1];
-                                  const lm = sub.answer.match(/LinkedIn:\s*(https:\/\/[^\s\n]+)/i);
-                                  if (lm) linkedUrl = lm[1];
+                                  const im = sub.answer.match(/Instagram:\s*([^\r\n]+)/i);
+                                  if (im) instaUrl = im[1].trim();
+                                  const lm = sub.answer.match(/LinkedIn:\s*([^\r\n]+)/i);
+                                  if (lm) linkedUrl = lm[1].trim();
                                 }
-                                if (!instaUrl && sub.link && /^https:\/\/(www\.)?instagram\.com\//i.test(sub.link)) {
-                                  instaUrl = sub.link;
+                                if (!instaUrl && sub.link && /instagram/i.test(sub.link)) {
+                                  instaUrl = sub.link.trim();
                                 }
-                                if (!linkedUrl && sub.link && /^https:\/\/(www\.)?linkedin\.com\//i.test(sub.link)) {
-                                  linkedUrl = sub.link;
+                                if (!linkedUrl && sub.link && (!instaUrl || /linkedin/i.test(sub.link))) {
+                                  linkedUrl = sub.link.trim();
                                 }
 
                                 if (instaUrl || linkedUrl) {
+                                  const instaHref = instaUrl.startsWith("http://") || instaUrl.startsWith("https://") ? instaUrl : `https://${instaUrl}`;
+                                  const linkedHref = linkedUrl.startsWith("http://") || linkedUrl.startsWith("https://") ? linkedUrl : `https://${linkedUrl}`;
                                   return (
                                     <div className="flex flex-wrap gap-2 mt-2.5">
                                       {instaUrl && (
                                         <a
-                                          href={instaUrl}
+                                          href={instaHref}
                                           target="_blank"
                                           rel="noopener noreferrer"
                                           className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono font-semibold bg-rose-50 border border-rose-200 text-rose-700 hover:bg-rose-100 transition-colors"
@@ -1481,7 +1483,7 @@ export default function AdminPage() {
                                       )}
                                       {linkedUrl && (
                                         <a
-                                          href={linkedUrl}
+                                          href={linkedHref}
                                           target="_blank"
                                           rel="noopener noreferrer"
                                           className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono font-semibold bg-blue-50 border border-blue-200 text-blue-700 hover:bg-blue-100 transition-colors"
