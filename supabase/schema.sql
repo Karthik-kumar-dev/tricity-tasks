@@ -123,3 +123,26 @@ EXCEPTION WHEN OTHERS THEN
 END;
 $$;
 
+-- ============================================================
+-- Task 2 Multi-Link Challenge — Links column on tasks table
+-- Run this migration in Supabase SQL Editor:
+-- ============================================================
+-- ALTER TABLE tasks ADD COLUMN IF NOT EXISTS links JSONB DEFAULT '[]'::jsonb;
+
+-- ============================================================
+-- Task 2 Multi-Link Challenge — Link click tracking
+-- Records which individual links each user has opened
+-- ============================================================
+CREATE TABLE IF NOT EXISTS task_link_clicks (
+  id                      SERIAL PRIMARY KEY,
+  team_id                 TEXT NOT NULL,
+  member_name_normalized  TEXT NOT NULL,
+  task_id                 INT NOT NULL,
+  link_id                 TEXT NOT NULL,
+  created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (team_id, member_name_normalized, task_id, link_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_task_link_clicks_lookup
+  ON task_link_clicks(team_id, member_name_normalized, task_id);
+

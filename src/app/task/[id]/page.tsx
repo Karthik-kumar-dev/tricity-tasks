@@ -3,8 +3,12 @@
 import { useEffect, useState, use } from "react";
 import Link from "next/link";
 import Task1PosterFlow from "@/components/Task1PosterFlow";
+import Task2MultiLinkFlow from "@/components/Task2MultiLinkFlow";
+import Task3LinkSubmissionFlow from "@/components/Task3LinkSubmissionFlow";
 
 const POSTER_TASK_ID = 1;
+const MULTI_LINK_TASK_ID = 2;
+const LINK_SUBMISSION_TASK_ID = 3;
 
 function readIdentityFromCookies() {
   if (typeof document === "undefined") {
@@ -23,6 +27,12 @@ function readIdentityFromCookies() {
   };
 }
 
+interface TaskLinkItem {
+  id: string;
+  label: string;
+  url: string;
+}
+
 interface TaskData {
   id: number;
   title: string;
@@ -30,6 +40,7 @@ interface TaskData {
   rules?: string | null;
   linkedin_template?: string | null;
   instagram_template?: string | null;
+  links?: TaskLinkItem[];
 }
 
 export default function TaskPage({ params }: { params: Promise<{ id: string }> }) {
@@ -37,6 +48,7 @@ export default function TaskPage({ params }: { params: Promise<{ id: string }> }
   const [mounted, setMounted] = useState(false);
   const [task, setTask] = useState<TaskData | null>(null);
   const [alreadySubmitted, setAlreadySubmitted] = useState(false);
+  const [openedLinkIds, setOpenedLinkIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [identity, setIdentity] = useState({
@@ -118,6 +130,9 @@ export default function TaskPage({ params }: { params: Promise<{ id: string }> }
         } else {
           setTask(data.task);
           setAlreadySubmitted(data.already_submitted);
+          if (data.opened_link_ids && Array.isArray(data.opened_link_ids)) {
+            setOpenedLinkIds(data.opened_link_ids);
+          }
         }
       })
       .catch(() => setError("Failed to load task"))
@@ -322,6 +337,26 @@ export default function TaskPage({ params }: { params: Promise<{ id: string }> }
             rules={task.rules}
             customTemplate={task.linkedin_template}
             customInstagramTemplate={task.instagram_template}
+          />
+        ) : task && task.id === MULTI_LINK_TASK_ID ? (
+          <Task2MultiLinkFlow
+            taskId={task.id}
+            teamId={identity.team_id}
+            memberName={identity.member_name}
+            collegeName={identity.college_name}
+            futurePlan={identity.future_plan}
+            links={task.links || []}
+            initialOpenedIds={openedLinkIds}
+            alreadySubmitted={alreadySubmitted}
+          />
+        ) : task && task.id === LINK_SUBMISSION_TASK_ID ? (
+          <Task3LinkSubmissionFlow
+            taskId={task.id}
+            teamId={identity.team_id}
+            memberName={identity.member_name}
+            collegeName={identity.college_name}
+            futurePlan={identity.future_plan}
+            alreadySubmitted={alreadySubmitted}
           />
         ) : (
           /* Submission Section */

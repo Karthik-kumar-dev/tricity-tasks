@@ -19,7 +19,7 @@ export async function PATCH(
   }
 
   const body = await request.json();
-  const { rules, linkedin_template, instagram_template, title, description } = body;
+  const { rules, linkedin_template, instagram_template, title, description, links } = body;
 
   const updateData: Record<string, unknown> = {};
   if (typeof rules === "string") updateData.rules = rules.trim() || null;
@@ -33,6 +33,9 @@ export async function PATCH(
   if (typeof description === "string" && description.trim()) {
     updateData.description = description.trim();
   }
+  if (Array.isArray(links)) {
+    updateData.links = links;
+  }
 
   if (Object.keys(updateData).length === 0) {
     return NextResponse.json({ error: "No fields to update" }, { status: 400 });
@@ -45,6 +48,7 @@ export async function PATCH(
     instagram_template: typeof instagram_template === "string" ? instagram_template : undefined,
     title: typeof title === "string" ? title : undefined,
     description: typeof description === "string" ? description : undefined,
+    links: Array.isArray(links) ? links : undefined,
   });
 
   const supabase = getSupabase();
@@ -53,7 +57,7 @@ export async function PATCH(
     .from("tasks")
     .update(updateData)
     .eq("id", taskId)
-    .select("id, title, description, is_active, rules, linkedin_template, instagram_template")
+    .select("id, title, description, is_active, rules, linkedin_template, instagram_template, links")
     .single();
 
   // If columns don't exist yet in Supabase, update basic fields and resolve
@@ -62,8 +66,10 @@ export async function PATCH(
     (error.code === "42703" ||
       error.message?.includes("rules") ||
       error.message?.includes("linkedin_template") ||
-      error.message?.includes("instagram_template"))
+      error.message?.includes("instagram_template") ||
+      error.message?.includes("links"))
   ) {
+    // Remove unsupported columns and retry
     const basicUpdate: Record<string, unknown> = {};
     if (updateData.title) basicUpdate.title = updateData.title;
     if (updateData.description) basicUpdate.description = updateData.description;
@@ -76,7 +82,7 @@ export async function PATCH(
         .select("id, title, description, is_active")
         .single();
       data = retry.data
-        ? { ...retry.data, rules: null, linkedin_template: null, instagram_template: null }
+        ? { ...retry.data, rules: null, linkedin_template: null, instagram_template: null, links: null }
         : null;
       error = retry.error;
     } else {
@@ -86,7 +92,7 @@ export async function PATCH(
         .eq("id", taskId)
         .single();
       data = fetchCurrent.data
-        ? { ...fetchCurrent.data, rules: null, linkedin_template: null, instagram_template: null }
+        ? { ...fetchCurrent.data, rules: null, linkedin_template: null, instagram_template: null, links: null }
         : null;
       error = fetchCurrent.error;
     }
@@ -101,6 +107,7 @@ export async function PATCH(
     rules: data.rules,
     linkedin_template: data.linkedin_template,
     instagram_template: data.instagram_template,
+    links: data.links,
   });
 
   return NextResponse.json({
@@ -110,6 +117,7 @@ export async function PATCH(
       rules: resolved.rules,
       linkedin_template: resolved.linkedin_template,
       instagram_template: resolved.instagram_template,
+      links: resolved.links,
     },
   });
 }

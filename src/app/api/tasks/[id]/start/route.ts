@@ -44,17 +44,18 @@ export async function POST(
   // Check task exists and is active
   let { data: task, error: taskError } = await supabase
     .from("tasks")
-    .select("id, title, description, is_active, rules, linkedin_template, instagram_template")
+    .select("id, title, description, is_active, rules, linkedin_template, instagram_template, links")
     .eq("id", taskId)
     .single();
 
-  // Fallback if rules, linkedin_template, or instagram_template columns do not exist yet in Supabase
+  // Fallback if columns do not exist yet in Supabase
   if (
     taskError &&
     (taskError.code === "42703" ||
       taskError.message?.includes("rules") ||
       taskError.message?.includes("linkedin_template") ||
-      taskError.message?.includes("instagram_template"))
+      taskError.message?.includes("instagram_template") ||
+      taskError.message?.includes("links"))
   ) {
     const retry = await supabase
       .from("tasks")
@@ -62,7 +63,7 @@ export async function POST(
       .eq("id", taskId)
       .single();
     task = retry.data
-      ? { ...retry.data, rules: null, linkedin_template: null, instagram_template: null }
+      ? { ...retry.data, rules: null, linkedin_template: null, instagram_template: null, links: null }
       : null;
     taskError = retry.error;
   }
@@ -131,7 +132,26 @@ export async function POST(
     rules: task.rules,
     linkedin_template: task.linkedin_template,
     instagram_template: task.instagram_template,
+    links: task.links,
   });
+
+  // For Task 2 (Multi-Link), also fetch which links the user has already opened
+  let opened_link_ids: string[] = [];
+  if (resolved.links.length > 0) {
+    try {
+      const { data: clicks } = await supabase
+        .from("task_link_clicks")
+        .select("link_id")
+        .eq("team_id", trimmedTeamId)
+        .eq("member_name_normalized", normalizedName)
+        .eq("task_id", taskId);
+      if (clicks) {
+        opened_link_ids = clicks.map((c) => c.link_id);
+      }
+    } catch {
+      // Table may not exist yet; local fallback is handled client-side via /api/tasks/[id]/links
+    }
+  }
 
   return NextResponse.json({
     task: {
@@ -141,7 +161,9 @@ export async function POST(
       rules: resolved.rules,
       linkedin_template: resolved.linkedin_template,
       instagram_template: resolved.instagram_template,
+      links: resolved.links,
     },
     already_submitted: !!existing,
+    opened_link_ids,
   });
 }

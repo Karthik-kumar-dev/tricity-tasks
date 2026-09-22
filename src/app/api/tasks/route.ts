@@ -9,28 +9,45 @@ export async function GET() {
 
   let { data: tasks, error } = await supabase
     .from("tasks")
-    .select("id, title, description, is_active, rules, linkedin_template, instagram_template")
+    .select("id, title, description, is_active, rules, linkedin_template, instagram_template, links")
     .order("id", { ascending: true });
 
-  // Fallback if rules, linkedin_template, or instagram_template columns do not exist yet in Supabase
+  // Fallback if columns do not exist yet in Supabase
   if (
     error &&
     (error.code === "42703" ||
       error.message?.includes("rules") ||
       error.message?.includes("linkedin_template") ||
-      error.message?.includes("instagram_template"))
+      error.message?.includes("instagram_template") ||
+      error.message?.includes("links"))
   ) {
-    const retry = await supabase
+    // Try without links column
+    const retry1 = await supabase
       .from("tasks")
-      .select("id, title, description, is_active")
+      .select("id, title, description, is_active, rules, linkedin_template, instagram_template")
       .order("id", { ascending: true });
-    tasks = (retry.data || []).map((t) => ({
-      ...t,
-      rules: null,
-      linkedin_template: null,
-      instagram_template: null,
-    }));
-    error = retry.error;
+
+    if (retry1.error) {
+      // Try minimal columns
+      const retry2 = await supabase
+        .from("tasks")
+        .select("id, title, description, is_active")
+        .order("id", { ascending: true });
+      tasks = (retry2.data || []).map((t) => ({
+        ...t,
+        rules: null,
+        linkedin_template: null,
+        instagram_template: null,
+        links: null,
+      }));
+      error = retry2.error;
+    } else {
+      tasks = (retry1.data || []).map((t) => ({
+        ...t,
+        links: null,
+      }));
+      error = null;
+    }
   }
 
   if (error) {
@@ -44,6 +61,7 @@ export async function GET() {
       rules: resolved.rules,
       linkedin_template: resolved.linkedin_template,
       instagram_template: resolved.instagram_template,
+      links: resolved.links,
     };
   });
 

@@ -1,9 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabase } from "@/lib/supabase-server";
 import { cookies } from "next/headers";
+import { resolveTaskRulesAndTemplate } from "@/lib/task-rules";
+import fs from "fs";
+import path from "path";
 
 // Task 1 ("Share Your Registration Poster") requires LinkedIn post URL (Instagram is optional).
 const POSTER_TASK_ID = 1;
+const MULTI_LINK_TASK_ID = 2;
+const LINK_SUBMISSION_TASK_ID = 3;
 
 export async function POST(
   request: NextRequest,
@@ -44,6 +49,8 @@ export async function POST(
   }
 
   const isPosterTask = taskId === POSTER_TASK_ID;
+  const isMultiLinkTask = taskId === MULTI_LINK_TASK_ID;
+  const isLinkSubmissionTask = taskId === LINK_SUBMISSION_TASK_ID;
   const answerStr = answer && typeof answer === "string" ? answer.trim() : "";
   let linkStr = link && typeof link === "string" ? link.trim() : "";
 
@@ -63,6 +70,18 @@ export async function POST(
     }
 
     linkStr = linkedUrl;
+  } else if (isMultiLinkTask) {
+    // Task 2: validate all links are opened
+    // We will build the answer automatically from the opened links
+  } else if (isLinkSubmissionTask) {
+    // Task 3: require a valid URL
+    if (!linkStr && !answerStr) {
+      return NextResponse.json({ error: "A link URL is required" }, { status: 400 });
+    }
+    // If they put the link in the answer field, move it
+    if (!linkStr && answerStr) {
+      linkStr = answerStr;
+    }
   } else {
     if (!answerStr && !linkStr) {
       return NextResponse.json({ error: "An answer or link is required" }, { status: 400 });
@@ -96,11 +115,84 @@ export async function POST(
       ? rawFuturePlan.trim()
       : null;
 
-  const finalAnswer = isPosterTask
-    ? [instaUrl ? `Instagram: ${instaUrl}` : "", linkedUrl ? `LinkedIn: ${linkedUrl}` : ""]
-        .filter(Boolean)
-        .join("\n")
-    : answerStr;
+  let finalAnswer: string;
+  if (isPosterTask) {
+    finalAnswer = [instaUrl ? `Instagram: ${instaUrl}` : "", linkedUrl ? `LinkedIn: ${linkedUrl}` : ""]
+      .filter(Boolean)
+      .join("\n");
+  } else if (isMultiLinkTask) {
+    // For Task 2, validate all links opened and build auto-answer
+    const supabaseForLinks = getSupabase();
+    // Get the task's configured links
+    let taskLinks: { id: string; label: string; url: string }[] = [];
+    try {
+      const { data: taskData } = await supabaseForLinks
+        .from("tasks")
+        .select("links")
+        .eq("id", taskId)
+        .single();
+      if (taskData?.links && Array.isArray(taskData.links)) {
+        taskLinks = taskData.links;
+      }
+    } catch {
+      // fallback to local config
+    }
+    if (taskLinks.length === 0) {
+      const resolved = resolveTaskRulesAndTemplate({ id: taskId });
+      taskLinks = resolved.links;
+    }
+
+    if (taskLinks.length > 0) {
+      // Get opened link IDs from DB
+      const openedIds = new Set<string>();
+      try {
+        const { data: clicks } = await supabaseForLinks
+          .from("task_link_clicks")
+          .select("link_id")
+          .eq("team_id", trimmedTeamId)
+          .eq("member_name_normalized", normalizedName)
+          .eq("task_id", taskId);
+        if (clicks) {
+          for (const c of clicks) openedIds.add(c.link_id);
+        }
+      } catch {
+        // also check local
+      }
+
+      // Also check local fallback
+      const CLICKS_FILE = path.join(process.cwd(), "data", "task_link_clicks.json");
+      try {
+        if (fs.existsSync(CLICKS_FILE)) {
+          const localClicks = JSON.parse(fs.readFileSync(CLICKS_FILE, "utf-8"));
+          for (const c of localClicks) {
+            if (
+              c.team_id === trimmedTeamId &&
+              c.member_name_normalized === normalizedName &&
+              c.task_id === taskId
+            ) {
+              openedIds.add(c.link_id);
+            }
+          }
+        }
+      } catch {
+        // ignore
+      }
+
+      const unopened = taskLinks.filter((l) => !openedIds.has(l.id));
+      if (unopened.length > 0) {
+        return NextResponse.json(
+          { error: `You must open all ${taskLinks.length} links before submitting. ${unopened.length} link(s) remaining.` },
+          { status: 400 }
+        );
+      }
+    }
+
+    finalAnswer = answerStr || `All ${taskLinks.length} links opened and verified.`;
+  } else if (isLinkSubmissionTask) {
+    finalAnswer = answerStr || `Link submitted: ${linkStr}`;
+  } else {
+    finalAnswer = answerStr;
+  }
 
   const payload: Record<string, unknown> = {
     team_id: trimmedTeamId,

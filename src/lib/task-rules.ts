@@ -1,12 +1,19 @@
 import fs from "fs";
 import path from "path";
 
+export interface TaskLinkItem {
+  id: string;
+  label: string;
+  url: string;
+}
+
 export interface TaskOverrides {
   rules?: string | null;
   linkedin_template?: string | null;
   instagram_template?: string | null;
   title?: string;
   description?: string;
+  links?: TaskLinkItem[];
 }
 
 const DEFAULT_LINKEDIN_TEMPLATE = `I'm officially registered for the TRI-CITY AI HACKATHON 2026! 🚀
@@ -45,16 +52,17 @@ export function getDefaultRules(taskId: number): string {
       ].join("\n");
     case 2:
       return [
-        "1. Team Identification: Submit under your registered Team ID (starts with TRI-) and your official name.",
-        "2. Independent Analysis: Perform queries or data inspection independently; explain the exact filter or methodology used.",
-        "3. Verifiable Proof: Submit the extracted signal and include code/query snippets or reference sources.",
-        "4. Plagiarism Penalty: Any copied solutions or unauthorized cross-team sharing will result in disqualification.",
+        "1. Open All Links: You must click and open every link listed below. Each link button locks permanently after you click it.",
+        "2. Completion Required: The Submit button only unlocks after all links have been opened.",
+        "3. One Submission: Each member can submit once. Once submitted, you cannot re-submit.",
+        "4. Fair Play: Do not share answers or link contents with other teams.",
       ].join("\n");
     case 3:
       return [
-        "1. Step-by-Step Logic: Provide the complete sequence of deductions from clue to suspect.",
-        "2. No Pure Guesses: Solutions without clear elimination steps will not receive full credit.",
-        "3. Individual Submission: Each member may submit their solution once.",
+        "1. Submit a Link: Provide a valid URL (https:// or http://) in the field below.",
+        "2. One Submission: Each member can submit once per challenge.",
+        "3. Link Validity: Ensure the link is publicly accessible and will remain available until evaluations conclude.",
+        "4. Verification: Invalid or broken URLs will be awarded zero points.",
       ].join("\n");
     case 4:
       return [
@@ -122,7 +130,7 @@ export function saveLocalOverride(taskId: number, data: TaskOverrides): void {
 }
 
 /**
- * Resolves the rules, linkedin template, and instagram template for a task:
+ * Resolves the rules, linkedin template, instagram template, and links for a task:
  * 1. Database value if non-empty string
  * 2. Local config file override if exists
  * 3. Default rule/template for the given taskId
@@ -132,7 +140,8 @@ export function resolveTaskRulesAndTemplate(task: {
   rules?: string | null;
   linkedin_template?: string | null;
   instagram_template?: string | null;
-}): { rules: string; linkedin_template: string; instagram_template: string } {
+  links?: TaskLinkItem[] | null;
+}): { rules: string; linkedin_template: string; instagram_template: string; links: TaskLinkItem[] } {
   const local = getLocalOverrides()[task.id] || {};
 
   const rules =
@@ -150,5 +159,15 @@ export function resolveTaskRulesAndTemplate(task: {
     (local.instagram_template && local.instagram_template.trim()) ||
     (task.id === 1 ? getDefaultInstagramTemplate() : "");
 
-  return { rules, linkedin_template, instagram_template };
+  // Links: DB value first, then local override, then empty
+  const links: TaskLinkItem[] =
+    (task.links && Array.isArray(task.links) && task.links.length > 0
+      ? task.links
+      : null) ||
+    (local.links && Array.isArray(local.links) && local.links.length > 0
+      ? local.links
+      : null) ||
+    [];
+
+  return { rules, linkedin_template, instagram_template, links };
 }

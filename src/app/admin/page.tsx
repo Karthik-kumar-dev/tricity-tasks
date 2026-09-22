@@ -1,8 +1,14 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import Link from "next/link";
 import { MAX_SCORE, TASK_POINTS, FUTURE_PLAN_OPTIONS } from "@/lib/constants";
+
+export interface TaskLinkItem {
+  id: string;
+  label: string;
+  url: string;
+}
 
 interface Task {
   id: number;
@@ -12,6 +18,7 @@ interface Task {
   rules?: string | null;
   linkedin_template?: string | null;
   instagram_template?: string | null;
+  links?: TaskLinkItem[];
 }
 
 interface Team {
@@ -26,6 +33,7 @@ interface Team {
 
 interface Submission {
   id: number;
+  team_id?: string;
   member_name: string;
   college_name?: string | null;
   future_plan?: string | null;
@@ -155,6 +163,7 @@ export default function AdminPage() {
   const [taskEditRules, setTaskEditRules] = useState("");
   const [taskEditTemplate, setTaskEditTemplate] = useState("");
   const [taskEditInstagramTemplate, setTaskEditInstagramTemplate] = useState("");
+  const [taskEditLinks, setTaskEditLinks] = useState<TaskLinkItem[]>([]);
   const [savingTask, setSavingTask] = useState(false);
   const [taskSaveSuccess, setTaskSaveSuccess] = useState(false);
   const [taskSaveError, setTaskSaveError] = useState("");
@@ -163,6 +172,13 @@ export default function AdminPage() {
   const [editingScore, setEditingScore] = useState<number | null>(null);
   const [scoreValue, setScoreValue] = useState("");
   const [savingScore, setSavingScore] = useState(false);
+
+  // Combined Matrix & Submissions state
+  const [allSubmissions, setAllSubmissions] = useState<Submission[]>([]);
+  const [loadingAllSubmissions, setLoadingAllSubmissions] = useState(false);
+  const [submissionsViewMode, setSubmissionsViewMode] = useState<"matrix" | "leaderboard">("matrix");
+  const [matrixTaskFilter, setMatrixTaskFilter] = useState<"all" | "1" | "2" | "3">("all");
+  const [matrixScoreFilter, setMatrixScoreFilter] = useState<"all" | "unscored" | "scored">("all");
 
   // Export state
   const [exportOpen, setExportOpen] = useState(false);
@@ -185,6 +201,19 @@ export default function AdminPage() {
     | null
   >(null);
 
+  const fetchAllSubmissions = useCallback(async () => {
+    setLoadingAllSubmissions(true);
+    try {
+      const res = await fetch("/api/admin/submissions");
+      const data = await res.json();
+      setAllSubmissions(data.submissions || []);
+    } catch (err) {
+      console.error("Failed to fetch all submissions", err);
+    } finally {
+      setLoadingAllSubmissions(false);
+    }
+  }, []);
+
   // Check auth on load
   useEffect(() => {
     fetchTeams().then((ok) => {
@@ -193,9 +222,10 @@ export default function AdminPage() {
       if (ok) {
         fetchTasks();
         fetchRegStats();
+        fetchAllSubmissions();
       }
     });
-  }, []);
+  }, [fetchAllSubmissions]);
 
   async function fetchRegStats() {
     try {
@@ -433,6 +463,7 @@ export default function AdminPage() {
       setAuthenticated(true);
       fetchTasks();
       fetchTeams();
+      fetchAllSubmissions();
     } catch {
       setLoginError("Network error. Could not connect to server.");
     } finally {
@@ -474,6 +505,11 @@ export default function AdminPage() {
     setTaskEditRules(task.rules || "");
     setTaskEditTemplate(task.linkedin_template || "");
     setTaskEditInstagramTemplate(task.instagram_template || "");
+    setTaskEditLinks(
+      task.links && Array.isArray(task.links)
+        ? JSON.parse(JSON.stringify(task.links))
+        : []
+    );
     setTaskSaveSuccess(false);
     setTaskSaveError("");
   }
@@ -482,6 +518,39 @@ export default function AdminPage() {
     setEditingTaskId(null);
     setTaskSaveSuccess(false);
     setTaskSaveError("");
+  }
+
+  function addEditLink() {
+    setTaskEditLinks((prev) => [
+      ...prev,
+      {
+        id: "link_" + Date.now() + "_" + Math.random().toString(36).substring(2, 6),
+        label: `Link ${prev.length + 1}: `,
+        url: "",
+      },
+    ]);
+  }
+
+  function updateEditLink(index: number, field: "label" | "url", val: string) {
+    setTaskEditLinks((prev) =>
+      prev.map((item, idx) => (idx === index ? { ...item, [field]: val } : item))
+    );
+  }
+
+  function removeEditLink(index: number) {
+    setTaskEditLinks((prev) => prev.filter((_, idx) => idx !== index));
+  }
+
+  function moveEditLink(index: number, direction: -1 | 1) {
+    setTaskEditLinks((prev) => {
+      const target = index + direction;
+      if (target < 0 || target >= prev.length) return prev;
+      const copy = [...prev];
+      const temp = copy[index];
+      copy[index] = copy[target];
+      copy[target] = temp;
+      return copy;
+    });
   }
 
   async function handleSaveTask(taskId: number) {
@@ -499,6 +568,7 @@ export default function AdminPage() {
           rules: taskEditRules,
           linkedin_template: taskEditTemplate,
           instagram_template: taskEditInstagramTemplate,
+          links: taskEditLinks,
         }),
       });
 
@@ -550,6 +620,11 @@ export default function AdminPage() {
       const data = await res.json();
       if (data.success) {
         setSubmissions((prev) =>
+          prev.map((s) =>
+            s.id === submissionId ? { ...s, score: data.score } : s
+          )
+        );
+        setAllSubmissions((prev) =>
           prev.map((s) =>
             s.id === submissionId ? { ...s, score: data.score } : s
           )
@@ -653,10 +728,12 @@ export default function AdminPage() {
 
       if (confirmAction.type === "submission") {
         setSubmissions((prev) => prev.filter((s) => s.id !== confirmAction.id));
+        setAllSubmissions((prev) => prev.filter((s) => s.id !== confirmAction.id));
         fetchTeams();
       } else if (confirmAction.type === "team") {
         setSelectedTeam(null);
         setSubmissions([]);
+        setAllSubmissions((prev) => prev.filter((s) => s.team_id !== confirmAction.teamId));
         setTeams((prev) =>
           prev.filter((t) => t.team_id !== confirmAction.teamId)
         );
@@ -666,6 +743,16 @@ export default function AdminPage() {
             (s) =>
               s.member_name.trim().toLowerCase() !==
               confirmAction.memberName.trim().toLowerCase()
+          )
+        );
+        setAllSubmissions((prev) =>
+          prev.filter(
+            (s) =>
+              !(
+                s.team_id === confirmAction.teamId &&
+                s.member_name.trim().toLowerCase() ===
+                  confirmAction.memberName.trim().toLowerCase()
+              )
           )
         );
         fetchTeams();
@@ -713,6 +800,115 @@ export default function AdminPage() {
 
     return true;
   });
+
+  interface MemberSubmissionsRow {
+    teamId: string;
+    memberName: string;
+    collegeName?: string | null;
+    futurePlan?: string | null;
+    task1?: Submission;
+    task2?: Submission;
+    task3?: Submission;
+    totalScore: number;
+    submittedCount: number;
+    lastCreatedAt?: string;
+  }
+
+  const matrixRows: MemberSubmissionsRow[] = useMemo(() => {
+    const source = selectedTeam ? submissions : allSubmissions;
+    const map = new Map<string, MemberSubmissionsRow>();
+
+    for (const sub of source) {
+      const teamId = sub.team_id || selectedTeam || "UNKNOWN";
+      const normKey = `${teamId}:::${sub.member_name.trim().toLowerCase()}`;
+      let row = map.get(normKey);
+      if (!row) {
+        row = {
+          teamId,
+          memberName: sub.member_name,
+          collegeName: sub.college_name,
+          futurePlan: sub.future_plan,
+          totalScore: 0,
+          submittedCount: 0,
+          lastCreatedAt: sub.created_at,
+        };
+        map.set(normKey, row);
+      }
+      if (!row.collegeName && sub.college_name) row.collegeName = sub.college_name;
+      if (!row.futurePlan && sub.future_plan) row.futurePlan = sub.future_plan;
+      if (sub.created_at && (!row.lastCreatedAt || sub.created_at > row.lastCreatedAt)) {
+        row.lastCreatedAt = sub.created_at;
+      }
+
+      if (sub.task_id === 1) row.task1 = sub;
+      else if (sub.task_id === 2) row.task2 = sub;
+      else if (sub.task_id === 3) row.task3 = sub;
+
+      if (typeof sub.score === "number") {
+        row.totalScore += sub.score;
+      }
+      row.submittedCount += 1;
+    }
+
+    let result = Array.from(map.values());
+
+    // Search filter (team ID, member name, college, future plan)
+    if (subSearchLower) {
+      result = result.filter(
+        (r) =>
+          r.teamId.toLowerCase().includes(subSearchLower) ||
+          r.memberName.toLowerCase().includes(subSearchLower) ||
+          (r.collegeName && r.collegeName.toLowerCase().includes(subSearchLower)) ||
+          (r.futurePlan && r.futurePlan.toLowerCase().includes(subSearchLower))
+      );
+    }
+
+    // Future plan filter
+    if (subPlanFilter !== "all") {
+      result = result.filter((r) => {
+        if (!r.futurePlan) return false;
+        if (subPlanFilter === "Others (please specify)") {
+          return r.futurePlan.toLowerCase().startsWith("others");
+        }
+        return r.futurePlan.toLowerCase() === subPlanFilter.toLowerCase();
+      });
+    }
+
+    // Task filter
+    if (matrixTaskFilter === "1") {
+      result = result.filter((r) => Boolean(r.task1));
+    } else if (matrixTaskFilter === "2") {
+      result = result.filter((r) => Boolean(r.task2));
+    } else if (matrixTaskFilter === "3") {
+      result = result.filter((r) => Boolean(r.task3));
+    }
+
+    // Score filter
+    if (matrixScoreFilter === "unscored") {
+      result = result.filter(
+        (r) =>
+          (r.task1 && r.task1.score === null) ||
+          (r.task2 && r.task2.score === null) ||
+          (r.task3 && r.task3.score === null)
+      );
+    } else if (matrixScoreFilter === "scored") {
+      result = result.filter(
+        (r) =>
+          (r.task1 && r.task1.score !== null) ||
+          (r.task2 && r.task2.score !== null) ||
+          (r.task3 && r.task3.score !== null)
+      );
+    }
+
+    // Sort by teamId, then memberName
+    result.sort((a, b) => {
+      const cmp = a.teamId.localeCompare(b.teamId);
+      if (cmp !== 0) return cmp;
+      return a.memberName.localeCompare(b.memberName);
+    });
+
+    return result;
+  }, [selectedTeam, submissions, allSubmissions, subSearchLower, subPlanFilter, matrixTaskFilter, matrixScoreFilter]);
 
   // ── Checking State ──
   if (checking) {
@@ -1044,49 +1240,203 @@ export default function AdminPage() {
                           </p>
                         </div>
 
-                        {/* LinkedIn Template Editor */}
-                        <div className="p-4 rounded-xl bg-blue-50/60 border border-blue-200">
-                          <div className="flex items-center justify-between mb-1.5">
-                            <label className="block text-xs font-mono font-semibold uppercase text-blue-900">
-                              📢 LinkedIn Post Message Template
-                            </label>
-                            <span className="text-[11px] font-mono text-blue-600 font-semibold">
-                              Placeholders: &#123;name&#125; &amp; &#123;college&#125;
-                            </span>
-                          </div>
-                          <textarea
-                            rows={6}
-                            className="input-field text-xs sm:text-sm font-mono leading-relaxed bg-white border-blue-200"
-                            value={taskEditTemplate}
-                            onChange={(e) => setTaskEditTemplate(e.target.value)}
-                            placeholder="I am thrilled to announce that I've joined the Tri-City Hackathon 2026! Name: {name}, College: {college}..."
-                          />
-                          <p className="text-[11px] text-blue-700 mt-1.5 font-display">
-                            When participants click &ldquo;Copy LinkedIn Caption&rdquo; in Task 1, &#123;name&#125; will automatically be replaced with their title-cased name and &#123;college&#125; with their institution.
-                          </p>
-                        </div>
+                        {/* Task 1: LinkedIn & Instagram Template Editors */}
+                        {task.id === 1 && (
+                          <>
+                            {/* LinkedIn Template Editor */}
+                            <div className="p-4 rounded-xl bg-blue-50/60 border border-blue-200">
+                              <div className="flex items-center justify-between mb-1.5">
+                                <label className="block text-xs font-mono font-semibold uppercase text-blue-900">
+                                  📢 LinkedIn Post Message Template
+                                </label>
+                                <span className="text-[11px] font-mono text-blue-600 font-semibold">
+                                  Placeholders: &#123;name&#125; &amp; &#123;college&#125;
+                                </span>
+                              </div>
+                              <textarea
+                                rows={6}
+                                className="input-field text-xs sm:text-sm font-mono leading-relaxed bg-white border-blue-200"
+                                value={taskEditTemplate}
+                                onChange={(e) => setTaskEditTemplate(e.target.value)}
+                                placeholder="I am thrilled to announce that I've joined the Tri-City Hackathon 2026! Name: {name}, College: {college}..."
+                              />
+                              <p className="text-[11px] text-blue-700 mt-1.5 font-display">
+                                When participants click &ldquo;Copy LinkedIn Caption&rdquo; in Task 1, &#123;name&#125; will automatically be replaced with their title-cased name and &#123;college&#125; with their institution.
+                              </p>
+                            </div>
 
-                        {/* Instagram Template Editor */}
-                        <div className="p-4 rounded-xl bg-rose-50/60 border border-rose-200">
-                          <div className="flex items-center justify-between mb-1.5">
-                            <label className="block text-xs font-mono font-semibold uppercase text-rose-900">
-                              📸 Instagram Post &amp; Story Message Template
-                            </label>
-                            <span className="text-[11px] font-mono text-rose-600 font-semibold">
-                              Placeholders: &#123;name&#125; &amp; &#123;college&#125;
-                            </span>
+                            {/* Instagram Template Editor */}
+                            <div className="p-4 rounded-xl bg-rose-50/60 border border-rose-200">
+                              <div className="flex items-center justify-between mb-1.5">
+                                <label className="block text-xs font-mono font-semibold uppercase text-rose-900">
+                                  📸 Instagram Post &amp; Story Message Template
+                                </label>
+                                <span className="text-[11px] font-mono text-rose-600 font-semibold">
+                                  Placeholders: &#123;name&#125; &amp; &#123;college&#125;
+                                </span>
+                              </div>
+                              <textarea
+                                rows={6}
+                                className="input-field text-xs sm:text-sm font-mono leading-relaxed bg-white border-rose-200"
+                                value={taskEditInstagramTemplate}
+                                onChange={(e) => setTaskEditInstagramTemplate(e.target.value)}
+                                placeholder="Registered for the TRI-CITY AI HACKATHON 2026! Name: {name}, College: {college}..."
+                              />
+                              <p className="text-[11px] text-rose-700 mt-1.5 font-display">
+                                When participants click &ldquo;Copy Instagram Caption&rdquo; in Task 1, &#123;name&#125; will automatically be replaced with their title-cased name and &#123;college&#125; with their institution.
+                              </p>
+                            </div>
+                          </>
+                        )}
+
+                        {/* Task 2: Multi-Link Items Manager */}
+                        {task.id === 2 && (
+                          <div className="p-5 rounded-xl bg-teal-50/50 border border-teal-200 space-y-4">
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <h5 className="font-heading font-bold text-sm text-teal-950 flex items-center gap-1.5">
+                                  <span>🔗</span> Challenge Links Manager ({taskEditLinks.length})
+                                </h5>
+                                <p className="text-xs text-slate-500 font-display">
+                                  Admin adds/edits/removes links. Order is preserved as entered. Participants must open every link.
+                                </p>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={addEditLink}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-teal-700 hover:bg-teal-800 text-white font-mono text-xs font-bold transition-all shadow-xs cursor-pointer"
+                              >
+                                <span>+ Add Link</span>
+                              </button>
+                            </div>
+
+                            {taskEditLinks.length === 0 ? (
+                              <div className="p-6 rounded-lg bg-white border border-dashed border-teal-300 text-center">
+                                <p className="text-xs text-slate-500 font-mono mb-3">
+                                  No links configured yet. Click below to add the first link.
+                                </p>
+                                <button
+                                  type="button"
+                                  onClick={addEditLink}
+                                  className="btn-secondary text-xs"
+                                >
+                                  + Add First Link
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="space-y-3">
+                                {taskEditLinks.map((linkItem, idx) => (
+                                  <div
+                                    key={linkItem.id || idx}
+                                    className="p-4 rounded-lg bg-white border border-slate-200 shadow-2xs space-y-3"
+                                  >
+                                    <div className="flex items-center justify-between gap-2">
+                                      <div className="flex items-center gap-2">
+                                        <span className="w-6 h-6 rounded-md bg-teal-100 text-teal-800 font-mono text-xs font-bold flex items-center justify-center">
+                                          #{idx + 1}
+                                        </span>
+                                        <span className="font-mono text-xs font-semibold text-slate-700">
+                                          Link {idx + 1}
+                                        </span>
+                                      </div>
+
+                                      <div className="flex items-center gap-1">
+                                        {/* Move Up */}
+                                        <button
+                                          type="button"
+                                          disabled={idx === 0}
+                                          onClick={() => moveEditLink(idx, -1)}
+                                          className="w-7 h-7 rounded border border-slate-200 hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-transparent flex items-center justify-center text-xs text-slate-600 cursor-pointer"
+                                          title="Move up"
+                                        >
+                                          ↑
+                                        </button>
+                                        {/* Move Down */}
+                                        <button
+                                          type="button"
+                                          disabled={idx === taskEditLinks.length - 1}
+                                          onClick={() => moveEditLink(idx, 1)}
+                                          className="w-7 h-7 rounded border border-slate-200 hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-transparent flex items-center justify-center text-xs text-slate-600 cursor-pointer"
+                                          title="Move down"
+                                        >
+                                          ↓
+                                        </button>
+                                        {/* Delete */}
+                                        <button
+                                          type="button"
+                                          onClick={() => removeEditLink(idx)}
+                                          className="w-7 h-7 rounded border border-red-200 hover:bg-red-50 text-red-600 flex items-center justify-center text-xs cursor-pointer ml-1"
+                                          title="Remove this link"
+                                        >
+                                          ✕
+                                        </button>
+                                      </div>
+                                    </div>
+
+                                    <div className="grid sm:grid-cols-2 gap-3">
+                                      <div>
+                                        <label className="block text-[11px] font-mono font-semibold uppercase text-slate-600 mb-1">
+                                          Button Label <span className="text-red-500">*</span>
+                                        </label>
+                                        <input
+                                          type="text"
+                                          className="input-field text-xs bg-slate-50/50"
+                                          value={linkItem.label}
+                                          onChange={(e) =>
+                                            updateEditLink(idx, "label", e.target.value)
+                                          }
+                                          placeholder="e.g. Link 1: Instagram post"
+                                        />
+                                      </div>
+                                      <div>
+                                        <label className="block text-[11px] font-mono font-semibold uppercase text-slate-600 mb-1">
+                                          Target URL <span className="text-red-500">*</span>
+                                        </label>
+                                        <div className="flex items-center gap-1.5">
+                                          <input
+                                            type="url"
+                                            className="input-field text-xs bg-slate-50/50 flex-1 font-mono"
+                                            value={linkItem.url}
+                                            onChange={(e) =>
+                                              updateEditLink(idx, "url", e.target.value)
+                                            }
+                                            placeholder="https://..."
+                                          />
+                                          {linkItem.url && (
+                                            <a
+                                              href={linkItem.url}
+                                              target="_blank"
+                                              rel="noopener noreferrer"
+                                              className="shrink-0 p-2 rounded-lg bg-teal-50 border border-teal-200 text-teal-700 hover:bg-teal-100 text-xs"
+                                              title="Test URL in new tab"
+                                            >
+                                              ↗
+                                            </a>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
                           </div>
-                          <textarea
-                            rows={6}
-                            className="input-field text-xs sm:text-sm font-mono leading-relaxed bg-white border-rose-200"
-                            value={taskEditInstagramTemplate}
-                            onChange={(e) => setTaskEditInstagramTemplate(e.target.value)}
-                            placeholder="Registered for the TRI-CITY AI HACKATHON 2026! Name: {name}, College: {college}..."
-                          />
-                          <p className="text-[11px] text-rose-700 mt-1.5 font-display">
-                            When participants click &ldquo;Copy Instagram Caption&rdquo; in Task 1, &#123;name&#125; will automatically be replaced with their title-cased name and &#123;college&#125; with their institution.
-                          </p>
-                        </div>
+                        )}
+
+                        {/* Task 3: Information note */}
+                        {task.id === 3 && (
+                          <div className="p-4 rounded-xl bg-teal-50/60 border border-teal-200">
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className="text-base">ℹ️</span>
+                              <h5 className="font-heading font-bold text-xs text-teal-900">
+                                Task 3 — Link Submission Configuration
+                              </h5>
+                            </div>
+                            <p className="text-xs text-teal-800 font-display leading-relaxed">
+                              Participants submit a single URL link for Task 3. Use the <strong>Official Task Rules &amp; Evaluation Guidelines</strong> field above to provide prompt instructions or requirements. The rules can be edited anytime and update on user screens immediately.
+                            </p>
+                          </div>
+                        )}
 
                         {/* Status Messages */}
                         {taskSaveError && (
@@ -1138,387 +1488,885 @@ export default function AdminPage() {
           </div>
         )}
 
-        {/* ── TAB 2: TEAMS & SCORES ── */}
+        {/* ── TAB 2: TEAMS & SCORES (COMBINED SUBMISSIONS MATRIX & LEADERBOARD) ── */}
         {activeTab === "teams" && (
-          <div>
-            {teams.length === 0 ? (
-              <div className="pro-card rounded-2xl p-16 text-center max-w-md mx-auto bg-white">
-                <div className="text-3xl mb-3">📭</div>
-                <h3 className="font-heading font-bold text-lg text-slate-900 mb-1">
-                  No Submissions Recorded
-                </h3>
-                <p className="text-xs text-slate-500 font-display">
-                  Once participants submit challenge solutions, their teams and scores will appear here.
-                </p>
+          <div className="space-y-5">
+            {/* View Mode & Filter Header */}
+            <div className="pro-card rounded-2xl p-5 bg-white space-y-4">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 pb-4">
+                <div>
+                  <h2 className="font-heading font-bold text-lg text-slate-900 flex items-center gap-2">
+                    <span>📋</span>
+                    <span>Tournament Submissions &amp; Scoring Console</span>
+                  </h2>
+                  <p className="text-xs text-slate-500 font-display mt-0.5">
+                    Unified evaluation matrix: review member submissions and assign scores for Task 1, Task 2, and Task 3 side-by-side.
+                  </p>
+                </div>
+
+                {/* View Switcher Pills */}
+                <div className="flex items-center gap-1.5 p-1 rounded-xl bg-slate-100 border border-slate-200 shrink-0 self-start md:self-auto">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSubmissionsViewMode("matrix");
+                    }}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-mono font-bold transition-all cursor-pointer ${
+                      submissionsViewMode === "matrix"
+                        ? "bg-white text-teal-800 shadow-2xs"
+                        : "text-slate-500 hover:text-slate-800"
+                    }`}
+                  >
+                    📊 Combined Matrix View
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSubmissionsViewMode("leaderboard");
+                    }}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-mono font-bold transition-all cursor-pointer ${
+                      submissionsViewMode === "leaderboard"
+                        ? "bg-white text-teal-800 shadow-2xs"
+                        : "text-slate-500 hover:text-slate-800"
+                    }`}
+                  >
+                    🏆 Team Leaderboard View
+                  </button>
+                </div>
               </div>
-            ) : (
-              <div className="grid lg:grid-cols-12 gap-6 items-start">
-                {/* Team List Column */}
-                <div className="lg:col-span-5 space-y-3">
-                  <div className="pro-card rounded-2xl p-5 bg-white">
-                    <h2 className="font-heading font-bold text-sm uppercase tracking-wider text-slate-700 mb-3">
-                      Team Leaderboard ({teams.length})
-                    </h2>
+
+              {/* Filters & Search Toolbar */}
+              <div className="flex flex-col lg:flex-row gap-3 items-stretch lg:items-center justify-between">
+                <div className="flex-1 flex flex-col sm:flex-row gap-2.5">
+                  <div className="relative flex-1">
                     <input
                       type="text"
-                      className="input-field text-xs mb-3"
-                      placeholder="⌕ Search by team ID or member name..."
-                      value={teamSearch}
-                      onChange={(e) => setTeamSearch(e.target.value)}
+                      className="input-field text-xs bg-slate-50/60 w-full pr-8"
+                      placeholder="⌕ Search by Team ID, Member, College, or Future Plan..."
+                      value={subSearch}
+                      onChange={(e) => setSubSearch(e.target.value)}
                     />
-
-                    {filteredTeams.length === 0 && teamSearch && (
-                      <div className="text-center py-6 text-xs text-slate-400 font-mono">
-                        No teams match &quot;{teamSearch}&quot;
-                      </div>
+                    {subSearch && (
+                      <button
+                        type="button"
+                        onClick={() => setSubSearch("")}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs font-mono"
+                      >
+                        ✕
+                      </button>
                     )}
+                  </div>
 
-                    <div className="space-y-2 max-h-[700px] overflow-y-auto pr-1">
-                      {filteredTeams.map((team, index) => {
-                        const isSelected = selectedTeam === team.team_id;
-                        return (
-                          <div
-                            key={team.team_id}
-                            onClick={() => selectTeam(team.team_id)}
-                            className={`p-4 rounded-xl border transition-all cursor-pointer ${
-                              isSelected
-                                ? "bg-teal-50/60 border-teal-500 shadow-2xs"
-                                : "bg-white border-slate-200 hover:border-slate-300"
-                            }`}
-                          >
-                            <div className="flex items-center justify-between mb-1.5">
-                              <div className="flex items-center gap-2.5">
-                                <span className="font-mono text-xs font-bold text-slate-500 w-5">
-                                  #{index + 1}
-                                </span>
-                                <span className="font-heading font-bold text-sm text-slate-900 truncate">
-                                  {team.team_id}
-                                </span>
-                              </div>
+                  <select
+                    value={subPlanFilter}
+                    onChange={(e) => setSubPlanFilter(e.target.value)}
+                    className="input-field text-xs bg-slate-50/60 sm:w-48 cursor-pointer font-mono shrink-0"
+                    title="Filter by future plan"
+                  >
+                    <option value="all">🎯 All Future Plans</option>
+                    {FUTURE_PLAN_OPTIONS.map((opt) => (
+                      <option key={opt} value={opt}>
+                        {opt}
+                      </option>
+                    ))}
+                  </select>
+                </div>
 
-                              <div className="flex items-center gap-2">
-                                <span className="font-mono text-xs font-bold text-teal-700">
-                                  {team.total_score}
-                                  <span className="text-[10px] text-slate-400 font-normal">/{MAX_SCORE}</span>
-                                </span>
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  {/* Task Filter */}
+                  <div className="flex items-center gap-1 p-1 rounded-lg bg-slate-100 border border-slate-200 text-xs font-mono">
+                    <span className="text-[10px] uppercase font-bold text-slate-400 px-1.5">Task:</span>
+                    <button
+                      type="button"
+                      onClick={() => setMatrixTaskFilter("all")}
+                      className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+                        matrixTaskFilter === "all" ? "bg-white text-slate-900 shadow-2xs" : "text-slate-500 hover:text-slate-900"
+                      }`}
+                    >
+                      All
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMatrixTaskFilter("1")}
+                      className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+                        matrixTaskFilter === "1" ? "bg-white text-teal-800 shadow-2xs" : "text-slate-500 hover:text-slate-900"
+                      }`}
+                    >
+                      T1
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMatrixTaskFilter("2")}
+                      className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+                        matrixTaskFilter === "2" ? "bg-white text-teal-800 shadow-2xs" : "text-slate-500 hover:text-slate-900"
+                      }`}
+                    >
+                      T2
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMatrixTaskFilter("3")}
+                      className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+                        matrixTaskFilter === "3" ? "bg-white text-teal-800 shadow-2xs" : "text-slate-500 hover:text-slate-900"
+                      }`}
+                    >
+                      T3
+                    </button>
+                  </div>
 
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setConfirmAction({
-                                      type: "team",
-                                      teamId: team.team_id,
-                                      label: `team "${team.team_id}" (all ${team.submission_count} submissions)`,
-                                    });
-                                  }}
-                                  className="w-6 h-6 rounded-md flex items-center justify-center text-slate-400 hover:text-red-600 hover:bg-red-50 text-xs"
-                                  title={`Delete team ${team.team_id}`}
-                                >
-                                  ✕
-                                </button>
-                              </div>
-                            </div>
+                  {/* Score Filter */}
+                  <select
+                    value={matrixScoreFilter}
+                    onChange={(e) => setMatrixScoreFilter(e.target.value as "all" | "unscored" | "scored")}
+                    className="input-field text-xs bg-slate-50/60 w-36 cursor-pointer font-mono"
+                  >
+                    <option value="all">All Scores</option>
+                    <option value="unscored">⚠️ Needs Scoring</option>
+                    <option value="scored">✓ Scored</option>
+                  </select>
 
-                            <div className="flex items-center gap-3 text-[11px] font-mono text-slate-500">
-                              <span>{team.member_count} members</span>
-                              <span>•</span>
-                              <span>{team.submission_count} subs</span>
-                              <span>•</span>
-                              <span>Avg: {team.avg_score !== null ? team.avg_score.toFixed(1) : "—"}</span>
-                            </div>
-
-                            {team.member_names && team.member_names.length > 0 && (
-                              <div className="text-[11px] text-slate-400 mt-1.5 truncate font-display">
-                                {team.member_names.join(", ")}
-                              </div>
-                            )}
-
-                            {team.colleges && team.colleges.length > 0 && (
-                              <div className="text-[11px] text-teal-700 mt-1 font-mono flex items-center gap-1 truncate">
-                                <span>🏫</span>
-                                <span>{team.colleges.join(", ")}</span>
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
+                  {/* Team Filter / Clear Selection */}
+                  {selectedTeam ? (
+                    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-teal-50 border border-teal-300 text-teal-800 font-mono text-xs font-bold">
+                      <span>Team: {selectedTeam}</span>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedTeam(null)}
+                        className="text-teal-600 hover:text-red-600 ml-1 font-bold"
+                        title="Show all teams"
+                      >
+                        ✕
+                      </button>
                     </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        fetchAllSubmissions();
+                        fetchTeams();
+                      }}
+                      className="p-2 rounded-lg border border-slate-200 hover:bg-slate-100 text-slate-600 text-xs font-mono"
+                      title="Refresh submissions"
+                    >
+                      ↻ Refresh
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* ── MODE A: COMBINED MATRIX VIEW ── */}
+            {submissionsViewMode === "matrix" && (
+              <div className="pro-card rounded-2xl bg-white overflow-hidden border border-slate-200 shadow-xs">
+                {/* Header count bar */}
+                <div className="p-4 bg-slate-50/70 border-b border-slate-200 flex items-center justify-between flex-wrap gap-2 text-xs font-mono">
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-slate-800">
+                      Showing {matrixRows.length} member submission records
+                    </span>
+                    {selectedTeam && (
+                      <span className="px-2 py-0.5 rounded bg-teal-100 text-teal-800 text-[11px]">
+                        Filtered to {selectedTeam}
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-slate-500 text-[11px] flex items-center gap-3">
+                    <span className="flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                      Task Completed
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full bg-amber-400" />
+                      Pending Evaluation
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full bg-slate-300" />
+                      Not Submitted
+                    </span>
                   </div>
                 </div>
 
-                {/* Submissions Detail Column */}
-                <div className="lg:col-span-7">
-                  {selectedTeam === null ? (
-                    <div className="pro-card rounded-2xl p-16 text-center bg-white flex flex-col items-center justify-center min-h-[400px]">
-                      <div className="text-3xl mb-3">👈</div>
-                      <h3 className="font-heading font-bold text-base text-slate-800 mb-1">
-                        Select a Team
-                      </h3>
-                      <p className="text-xs text-slate-400 font-display">
-                        Click on any team in the left panel to review and score their task submissions.
-                      </p>
-                    </div>
-                  ) : loadingTeam ? (
-                    <div className="pro-card rounded-2xl p-16 text-center bg-white flex flex-col items-center justify-center min-h-[400px]">
-                      <div className="w-8 h-8 rounded-full border-2 border-slate-200 border-t-teal-700 animate-spin mb-3" />
-                      <span className="font-mono text-xs uppercase tracking-wider text-slate-500 font-semibold">
-                        Loading Submissions...
-                      </span>
-                    </div>
-                  ) : (
-                    <div className="space-y-4">
-                      {/* Selected Team Bar */}
-                      <div className="pro-card rounded-2xl p-5 bg-white flex items-center justify-between">
-                        <div>
-                          <div className="font-mono text-[10px] uppercase tracking-wider text-slate-400">
-                            Viewing Submissions
-                          </div>
-                          <h2 className="font-heading font-bold text-xl text-slate-900">
-                            Team: {selectedTeam}
-                          </h2>
-                        </div>
+                {loadingAllSubmissions && allSubmissions.length === 0 ? (
+                  <div className="p-16 text-center">
+                    <div className="w-8 h-8 rounded-full border-2 border-slate-200 border-t-teal-700 animate-spin mx-auto mb-3" />
+                    <span className="font-mono text-xs text-slate-500 uppercase tracking-wider">
+                      Loading Submissions Matrix...
+                    </span>
+                  </div>
+                ) : matrixRows.length === 0 ? (
+                  <div className="p-16 text-center text-slate-400 font-mono text-xs">
+                    No submissions found matching your filters.
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse min-w-[900px]">
+                      <thead>
+                        <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-mono uppercase tracking-wider text-slate-600">
+                          <th className="py-3 px-4 w-28">Team ID</th>
+                          <th className="py-3 px-4 w-48">Member Info</th>
+                          <th className="py-3 px-4 w-60">Task 1: Poster &amp; Social</th>
+                          <th className="py-3 px-4 w-52">Task 2: Multi-Link</th>
+                          <th className="py-3 px-4 w-60">Task 3: Link Submission</th>
+                          <th className="py-3 px-4 w-28 text-center">Total Score</th>
+                          <th className="py-3 px-3 w-16 text-center">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 text-xs">
+                        {matrixRows.map((row) => {
+                          const rowKey = `${row.teamId}:::${row.memberName}`;
 
-                        <button
-                          onClick={() => setSelectedTeam(null)}
-                          className="btn-secondary text-xs py-1.5 px-3"
-                        >
-                          Clear Selection
-                        </button>
-                      </div>
-
-                      {/* Submissions Search & Filter */}
-                      <div className="flex flex-col sm:flex-row gap-2.5 items-stretch sm:items-center">
-                        <div className="flex-1 relative">
-                          <input
-                            type="text"
-                            className="input-field text-xs bg-white w-full"
-                            placeholder="⌕ Search submissions by member, task, college, plan..."
-                            value={subSearch}
-                            onChange={(e) => setSubSearch(e.target.value)}
-                          />
-                          {subSearch && (
-                            <button
-                              type="button"
-                              onClick={() => setSubSearch("")}
-                              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs font-mono"
+                          return (
+                            <tr
+                              key={rowKey}
+                              className="hover:bg-teal-50/20 transition-colors"
                             >
-                              ✕
-                            </button>
-                          )}
-                        </div>
+                              {/* Team ID */}
+                              <td className="py-3.5 px-4 align-top">
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedTeam(row.teamId)}
+                                  className="font-mono font-bold text-slate-900 hover:text-teal-700 underline text-xs decoration-slate-300"
+                                  title={`Filter by team ${row.teamId}`}
+                                >
+                                  {row.teamId}
+                                </button>
+                              </td>
 
-                        <select
-                          value={subPlanFilter}
-                          onChange={(e) => setSubPlanFilter(e.target.value)}
-                          className="input-field text-xs bg-white sm:w-56 cursor-pointer font-mono shrink-0"
-                          title="Filter by future plan"
-                        >
-                          <option value="all">🎯 All Future Plans</option>
-                          {FUTURE_PLAN_OPTIONS.map((opt) => (
-                            <option key={opt} value={opt}>
-                              {opt}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
+                              {/* Member Info */}
+                              <td className="py-3.5 px-4 align-top">
+                                <div className="font-heading font-bold text-slate-900 text-sm">
+                                  {row.memberName}
+                                </div>
+                                {row.collegeName && (
+                                  <div className="text-[11px] font-mono text-slate-500 mt-0.5 truncate max-w-[180px]">
+                                    🏫 {row.collegeName}
+                                  </div>
+                                )}
+                                {row.futurePlan && (
+                                  <div
+                                    className="text-[10px] font-mono font-medium text-indigo-700 bg-indigo-50 border border-indigo-200 px-1.5 py-0.5 rounded mt-1 inline-block truncate max-w-[180px]"
+                                    title={`Plan: ${row.futurePlan}`}
+                                  >
+                                    🎯 {row.futurePlan}
+                                  </div>
+                                )}
+                              </td>
 
-                      {filteredSubs.length === 0 ? (
-                        <div className="pro-card rounded-2xl p-10 text-center text-sm text-slate-500 bg-white">
-                          {subSearch || subPlanFilter !== "all"
-                            ? `No submissions matching your filter/search criteria.`
-                            : "No submissions recorded for this team."}
-                        </div>
-                      ) : (
-                        <div className="space-y-3">
-                          {filteredSubs.map((sub) => (
-                            <div
-                              key={sub.id}
-                              className="pro-card rounded-xl p-5 bg-white"
-                            >
-                              <div className="flex items-start justify-between gap-3 mb-3">
-                                <div>
-                                  <div className="flex items-center gap-2 flex-wrap mb-1">
-                                    <span className="font-heading font-bold text-base text-slate-900">
-                                      {sub.member_name}
-                                    </span>
-                                    {sub.college_name && (
-                                      <span className="px-2 py-0.5 rounded-full text-[11px] font-mono text-slate-600 bg-slate-100 border border-slate-200">
-                                        🏫 {sub.college_name}
+                              {/* Task 1: Poster & Social */}
+                              <td className="py-3.5 px-4 align-top bg-slate-50/30">
+                                {row.task1 ? (
+                                  <div className="space-y-1.5">
+                                    <div className="flex items-center justify-between">
+                                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-100 text-emerald-800">
+                                        ✓ Submitted
                                       </span>
-                                    )}
-                                    {sub.future_plan && (
-                                      <span className="px-2 py-0.5 rounded-full text-[11px] font-mono font-medium text-indigo-700 bg-indigo-50 border border-indigo-200" title={`Future Plan: ${sub.future_plan}`}>
-                                        🎯 {sub.future_plan}
-                                      </span>
-                                    )}
-                                    <span className="px-2.5 py-0.5 rounded-full text-xs font-mono font-semibold bg-teal-50 text-teal-800 border border-teal-200">
-                                      {sub.task_title}
-                                    </span>
-                                    <button
-                                      onClick={() =>
-                                        setConfirmAction({
-                                          type: "member",
-                                          teamId: selectedTeam || "",
-                                          memberName: sub.member_name,
-                                          label: `member "${sub.member_name}" and all their submissions`,
-                                        })
+                                      <button
+                                        onClick={() =>
+                                          setConfirmAction({
+                                            type: "submission",
+                                            id: row.task1!.id,
+                                            label: `Task 1 submission by "${row.memberName}"`,
+                                          })
+                                        }
+                                        className="text-slate-300 hover:text-red-600 p-0.5 text-xs"
+                                        title="Delete Task 1 submission"
+                                      >
+                                        🗑
+                                      </button>
+                                    </div>
+
+                                    {/* Links */}
+                                    {(() => {
+                                      let insta = "";
+                                      let linked = "";
+                                      if (row.task1.answer) {
+                                        const im = row.task1.answer.match(/Instagram:\s*([^\r\n]+)/i);
+                                        if (im) insta = im[1].trim();
+                                        const lm = row.task1.answer.match(/LinkedIn:\s*([^\r\n]+)/i);
+                                        if (lm) linked = lm[1].trim();
                                       }
-                                      className="text-[10px] font-mono px-2 py-0.5 rounded text-red-600 bg-red-50 border border-red-200 hover:bg-red-100"
-                                      title="Delete all submissions by this member"
+                                      if (!insta && row.task1.link && /instagram/i.test(row.task1.link)) {
+                                        insta = row.task1.link.trim();
+                                      }
+                                      if (!linked && row.task1.link && (!insta || /linkedin/i.test(row.task1.link))) {
+                                        linked = row.task1.link.trim();
+                                      }
+
+                                      const linkedHref = linked.startsWith("http") ? linked : `https://${linked}`;
+                                      const instaHref = insta.startsWith("http") ? insta : `https://${insta}`;
+
+                                      return (
+                                        <div className="flex flex-wrap gap-1 mt-1">
+                                          {linked && (
+                                            <a
+                                              href={linkedHref}
+                                              target="_blank"
+                                              rel="noopener noreferrer"
+                                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-blue-50 border border-blue-200 text-blue-700 hover:bg-blue-100"
+                                            >
+                                              <span>💼 LinkedIn ↗</span>
+                                            </a>
+                                          )}
+                                          {insta && (
+                                            <a
+                                              href={instaHref}
+                                              target="_blank"
+                                              rel="noopener noreferrer"
+                                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-rose-50 border border-rose-200 text-rose-700 hover:bg-rose-100"
+                                            >
+                                              <span>📸 Instagram ↗</span>
+                                            </a>
+                                          )}
+                                        </div>
+                                      );
+                                    })()}
+
+                                    {/* Inline Score */}
+                                    {editingScore === row.task1.id ? (
+                                      <div className="flex items-center gap-1 pt-1">
+                                        <input
+                                          type="number"
+                                          min="0"
+                                          max={TASK_POINTS}
+                                          className="input-field w-14 text-center text-xs py-0.5 px-1 font-mono"
+                                          value={scoreValue}
+                                          onChange={(e) => setScoreValue(e.target.value)}
+                                          autoFocus
+                                          onKeyDown={(e) => {
+                                            if (e.key === "Enter") saveScore(row.task1!.id);
+                                            if (e.key === "Escape") setEditingScore(null);
+                                          }}
+                                        />
+                                        <button
+                                          onClick={() => saveScore(row.task1!.id)}
+                                          disabled={savingScore}
+                                          className="px-2 py-0.5 rounded bg-emerald-600 text-white font-mono text-xs font-bold"
+                                        >
+                                          ✓
+                                        </button>
+                                        <button
+                                          onClick={() => setEditingScore(null)}
+                                          className="px-1.5 py-0.5 rounded bg-slate-200 text-slate-700 font-mono text-xs"
+                                        >
+                                          ✕
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <button
+                                        onClick={() => {
+                                          setEditingScore(row.task1!.id);
+                                          setScoreValue(
+                                            row.task1!.score !== null ? String(row.task1!.score) : ""
+                                          );
+                                        }}
+                                        className={`px-2.5 py-0.5 rounded text-[11px] font-mono font-bold border transition-all cursor-pointer block ${
+                                          row.task1.score !== null
+                                            ? "bg-emerald-50 border-emerald-300 text-emerald-800 hover:bg-emerald-100"
+                                            : "bg-amber-50 border-amber-300 text-amber-800 hover:bg-amber-100"
+                                        }`}
+                                      >
+                                        {row.task1.score !== null ? `Score: ${row.task1.score} / ${TASK_POINTS}` : "Assign Score"}
+                                      </button>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <span className="text-slate-300 font-mono text-[11px]">
+                                    — Not submitted
+                                  </span>
+                                )}
+                              </td>
+
+                              {/* Task 2: Multi-Link Challenge */}
+                              <td className="py-3.5 px-4 align-top">
+                                {row.task2 ? (
+                                  <div className="space-y-1.5">
+                                    <div className="flex items-center justify-between">
+                                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-teal-100 text-teal-800">
+                                        ✓ All Links Opened
+                                      </span>
+                                      <button
+                                        onClick={() =>
+                                          setConfirmAction({
+                                            type: "submission",
+                                            id: row.task2!.id,
+                                            label: `Task 2 submission by "${row.memberName}"`,
+                                          })
+                                        }
+                                        className="text-slate-300 hover:text-red-600 p-0.5 text-xs"
+                                        title="Delete Task 2 submission"
+                                      >
+                                        🗑
+                                      </button>
+                                    </div>
+
+                                    {/* Inline Score */}
+                                    {editingScore === row.task2.id ? (
+                                      <div className="flex items-center gap-1 pt-1">
+                                        <input
+                                          type="number"
+                                          min="0"
+                                          max={TASK_POINTS}
+                                          className="input-field w-14 text-center text-xs py-0.5 px-1 font-mono"
+                                          value={scoreValue}
+                                          onChange={(e) => setScoreValue(e.target.value)}
+                                          autoFocus
+                                          onKeyDown={(e) => {
+                                            if (e.key === "Enter") saveScore(row.task2!.id);
+                                            if (e.key === "Escape") setEditingScore(null);
+                                          }}
+                                        />
+                                        <button
+                                          onClick={() => saveScore(row.task2!.id)}
+                                          disabled={savingScore}
+                                          className="px-2 py-0.5 rounded bg-emerald-600 text-white font-mono text-xs font-bold"
+                                        >
+                                          ✓
+                                        </button>
+                                        <button
+                                          onClick={() => setEditingScore(null)}
+                                          className="px-1.5 py-0.5 rounded bg-slate-200 text-slate-700 font-mono text-xs"
+                                        >
+                                          ✕
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <button
+                                        onClick={() => {
+                                          setEditingScore(row.task2!.id);
+                                          setScoreValue(
+                                            row.task2!.score !== null ? String(row.task2!.score) : ""
+                                          );
+                                        }}
+                                        className={`px-2.5 py-0.5 rounded text-[11px] font-mono font-bold border transition-all cursor-pointer block ${
+                                          row.task2.score !== null
+                                            ? "bg-emerald-50 border-emerald-300 text-emerald-800 hover:bg-emerald-100"
+                                            : "bg-amber-50 border-amber-300 text-amber-800 hover:bg-amber-100"
+                                        }`}
+                                      >
+                                        {row.task2.score !== null ? `Score: ${row.task2.score} / ${TASK_POINTS}` : "Assign Score"}
+                                      </button>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <span className="text-slate-300 font-mono text-[11px]">
+                                    — Not submitted
+                                  </span>
+                                )}
+                              </td>
+
+                              {/* Task 3: Link Submission */}
+                              <td className="py-3.5 px-4 align-top bg-slate-50/30">
+                                {row.task3 ? (
+                                  <div className="space-y-1.5">
+                                    <div className="flex items-center justify-between">
+                                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-teal-100 text-teal-800">
+                                        ✓ Submitted
+                                      </span>
+                                      <button
+                                        onClick={() =>
+                                          setConfirmAction({
+                                            type: "submission",
+                                            id: row.task3!.id,
+                                            label: `Task 3 submission by "${row.memberName}"`,
+                                          })
+                                        }
+                                        className="text-slate-300 hover:text-red-600 p-0.5 text-xs"
+                                        title="Delete Task 3 submission"
+                                      >
+                                        🗑
+                                      </button>
+                                    </div>
+
+                                    {/* Link button */}
+                                    {row.task3.link && (
+                                      <div className="truncate max-w-[200px]">
+                                        <a
+                                          href={
+                                            row.task3.link.startsWith("http")
+                                              ? row.task3.link
+                                              : `https://${row.task3.link}`
+                                          }
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="inline-flex items-center gap-1 text-[11px] font-mono text-teal-700 hover:underline truncate"
+                                          title={row.task3.link}
+                                        >
+                                          <span>🔗 Link ↗</span>
+                                          <span className="truncate max-w-[140px] text-slate-500">
+                                            {row.task3.link}
+                                          </span>
+                                        </a>
+                                      </div>
+                                    )}
+
+                                    {/* Inline Score */}
+                                    {editingScore === row.task3.id ? (
+                                      <div className="flex items-center gap-1 pt-1">
+                                        <input
+                                          type="number"
+                                          min="0"
+                                          max={TASK_POINTS}
+                                          className="input-field w-14 text-center text-xs py-0.5 px-1 font-mono"
+                                          value={scoreValue}
+                                          onChange={(e) => setScoreValue(e.target.value)}
+                                          autoFocus
+                                          onKeyDown={(e) => {
+                                            if (e.key === "Enter") saveScore(row.task3!.id);
+                                            if (e.key === "Escape") setEditingScore(null);
+                                          }}
+                                        />
+                                        <button
+                                          onClick={() => saveScore(row.task3!.id)}
+                                          disabled={savingScore}
+                                          className="px-2 py-0.5 rounded bg-emerald-600 text-white font-mono text-xs font-bold"
+                                        >
+                                          ✓
+                                        </button>
+                                        <button
+                                          onClick={() => setEditingScore(null)}
+                                          className="px-1.5 py-0.5 rounded bg-slate-200 text-slate-700 font-mono text-xs"
+                                        >
+                                          ✕
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <button
+                                        onClick={() => {
+                                          setEditingScore(row.task3!.id);
+                                          setScoreValue(
+                                            row.task3!.score !== null ? String(row.task3!.score) : ""
+                                          );
+                                        }}
+                                        className={`px-2.5 py-0.5 rounded text-[11px] font-mono font-bold border transition-all cursor-pointer block ${
+                                          row.task3.score !== null
+                                            ? "bg-emerald-50 border-emerald-300 text-emerald-800 hover:bg-emerald-100"
+                                            : "bg-amber-50 border-amber-300 text-amber-800 hover:bg-amber-100"
+                                        }`}
+                                      >
+                                        {row.task3.score !== null ? `Score: ${row.task3.score} / ${TASK_POINTS}` : "Assign Score"}
+                                      </button>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <span className="text-slate-300 font-mono text-[11px]">
+                                    — Not submitted
+                                  </span>
+                                )}
+                              </td>
+
+                              {/* Total Score */}
+                              <td className="py-3.5 px-4 align-top text-center">
+                                <div className="font-mono font-bold text-sm text-slate-900">
+                                  {row.totalScore}
+                                  <span className="text-[10px] text-slate-400 font-normal">
+                                    /{row.submittedCount * TASK_POINTS}
+                                  </span>
+                                </div>
+                                <span className="text-[10px] font-mono text-slate-400">
+                                  {row.submittedCount} / 3 tasks
+                                </span>
+                              </td>
+
+                              {/* Remove User Action */}
+                              <td className="py-3.5 px-3 align-top text-center">
+                                <button
+                                  onClick={() =>
+                                    setConfirmAction({
+                                      type: "member",
+                                      teamId: row.teamId,
+                                      memberName: row.memberName,
+                                      label: `member "${row.memberName}" (${row.teamId}) and all their submissions`,
+                                    })
+                                  }
+                                  className="w-7 h-7 rounded-lg text-slate-300 hover:text-red-600 hover:bg-red-50 flex items-center justify-center text-xs mx-auto"
+                                  title="Remove member & submissions"
+                                >
+                                  🗑
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ── MODE B: TEAM LEADERBOARD & DETAIL SPLIT VIEW ── */}
+            {submissionsViewMode === "leaderboard" && (
+              <div>
+                {teams.length === 0 ? (
+                  <div className="pro-card rounded-2xl p-16 text-center max-w-md mx-auto bg-white">
+                    <div className="text-3xl mb-3">📭</div>
+                    <h3 className="font-heading font-bold text-lg text-slate-900 mb-1">
+                      No Submissions Recorded
+                    </h3>
+                    <p className="text-xs text-slate-500 font-display">
+                      Once participants submit challenge solutions, their teams and scores will appear here.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="grid lg:grid-cols-12 gap-6 items-start">
+                    {/* Team List Column */}
+                    <div className="lg:col-span-5 space-y-3">
+                      <div className="pro-card rounded-2xl p-5 bg-white">
+                        <div className="flex items-center justify-between mb-3">
+                          <h2 className="font-heading font-bold text-sm uppercase tracking-wider text-slate-700">
+                            Team Leaderboard ({teams.length})
+                          </h2>
+                          <span className="text-[11px] font-mono text-slate-400">
+                            Sorted by total score
+                          </span>
+                        </div>
+                        <input
+                          type="text"
+                          className="input-field text-xs mb-3"
+                          placeholder="⌕ Search by team ID or member name..."
+                          value={teamSearch}
+                          onChange={(e) => setTeamSearch(e.target.value)}
+                        />
+
+                        {filteredTeams.length === 0 && teamSearch && (
+                          <div className="text-center py-6 text-xs text-slate-400 font-mono">
+                            No teams match &quot;{teamSearch}&quot;
+                          </div>
+                        )}
+
+                        <div className="space-y-2 max-h-[700px] overflow-y-auto pr-1">
+                          {filteredTeams.map((team, index) => {
+                            const isSelected = selectedTeam === team.team_id;
+                            return (
+                              <div
+                                key={team.team_id}
+                                onClick={() => selectTeam(team.team_id)}
+                                className={`p-4 rounded-xl border transition-all cursor-pointer ${
+                                  isSelected
+                                    ? "bg-teal-50/60 border-teal-500 shadow-2xs"
+                                    : "bg-white border-slate-200 hover:border-slate-300"
+                                }`}
+                              >
+                                <div className="flex items-center justify-between mb-1.5">
+                                  <div className="flex items-center gap-2.5">
+                                    <span className="font-mono text-xs font-bold text-slate-500 w-5">
+                                      #{index + 1}
+                                    </span>
+                                    <span className="font-heading font-bold text-sm text-slate-900 truncate">
+                                      {team.team_id}
+                                    </span>
+                                  </div>
+
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-mono text-xs font-bold text-teal-700">
+                                      {team.total_score}
+                                      <span className="text-[10px] text-slate-400 font-normal">/{MAX_SCORE}</span>
+                                    </span>
+
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setConfirmAction({
+                                          type: "team",
+                                          teamId: team.team_id,
+                                          label: `team "${team.team_id}" (all ${team.submission_count} submissions)`,
+                                        });
+                                      }}
+                                      className="w-6 h-6 rounded-md flex items-center justify-center text-slate-400 hover:text-red-600 hover:bg-red-50 text-xs"
+                                      title={`Delete team ${team.team_id}`}
                                     >
-                                      Remove User
+                                      ✕
                                     </button>
                                   </div>
-                                  <p className="font-mono text-[11px] text-slate-400">
-                                    {new Date(sub.created_at).toLocaleString()}
-                                  </p>
                                 </div>
 
-                                {/* Score Badge & Actions */}
-                                <div className="flex items-center gap-2 shrink-0">
-                                  <button
-                                    onClick={() =>
-                                      setConfirmAction({
-                                        type: "submission",
-                                        id: sub.id,
-                                        label: `submission by "${sub.member_name}" for "${sub.task_title}"`,
-                                      })
-                                    }
-                                    className="w-7 h-7 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 flex items-center justify-center text-sm"
-                                    title="Delete this submission"
-                                  >
-                                    🗑
-                                  </button>
-
-                                  {editingScore === sub.id ? (
-                                    <div className="flex items-center gap-1.5">
-                                      <input
-                                        type="number"
-                                        min="0"
-                                        max={TASK_POINTS}
-                                        className="input-field w-18 text-center text-xs py-1"
-                                        value={scoreValue}
-                                        onChange={(e) => setScoreValue(e.target.value)}
-                                        autoFocus
-                                        onKeyDown={(e) => {
-                                          if (e.key === "Enter") saveScore(sub.id);
-                                          if (e.key === "Escape") setEditingScore(null);
-                                        }}
-                                      />
-                                      <button
-                                        onClick={() => saveScore(sub.id)}
-                                        disabled={savingScore}
-                                        className="px-2.5 py-1 rounded bg-emerald-600 text-white font-mono text-xs font-bold"
-                                      >
-                                        ✓
-                                      </button>
-                                      <button
-                                        onClick={() => setEditingScore(null)}
-                                        className="px-2.5 py-1 rounded bg-slate-200 text-slate-700 font-mono text-xs"
-                                      >
-                                        ✕
-                                      </button>
-                                    </div>
-                                  ) : (
-                                    <button
-                                      onClick={() => {
-                                        setEditingScore(sub.id);
-                                        setScoreValue(
-                                          sub.score !== null ? String(sub.score) : ""
-                                        );
-                                      }}
-                                      className={`px-3 py-1 rounded-lg text-xs font-mono font-bold border transition-all ${
-                                        sub.score !== null
-                                          ? "bg-emerald-50 border-emerald-200 text-emerald-800"
-                                          : "bg-amber-50 border-amber-200 text-amber-800 hover:bg-amber-100"
-                                      }`}
-                                    >
-                                      {sub.score !== null ? (
-                                        <span>{sub.score} / {TASK_POINTS}</span>
-                                      ) : (
-                                        <span>Assign Score</span>
-                                      )}
-                                    </button>
-                                  )}
+                                <div className="flex items-center gap-3 text-[11px] font-mono text-slate-500">
+                                  <span>{team.member_count} members</span>
+                                  <span>•</span>
+                                  <span>{team.submission_count} subs</span>
+                                  <span>•</span>
+                                  <span>Avg: {team.avg_score !== null ? team.avg_score.toFixed(1) : "—"}</span>
                                 </div>
+
+                                {team.member_names && team.member_names.length > 0 && (
+                                  <div className="text-[11px] text-slate-400 mt-1.5 truncate font-display">
+                                    {team.member_names.join(", ")}
+                                  </div>
+                                )}
+
+                                {team.colleges && team.colleges.length > 0 && (
+                                  <div className="text-[11px] text-teal-700 mt-1 font-mono flex items-center gap-1 truncate">
+                                    <span>🏫</span>
+                                    <span>{team.colleges.join(", ")}</span>
+                                  </div>
+                                )}
                               </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
 
-                              {/* Answer Text Area */}
-                              <div className="p-3.5 rounded-lg bg-slate-50 border border-slate-200 text-sm font-display text-slate-800 whitespace-pre-wrap leading-relaxed">
-                                {sub.answer}
+                    {/* Team Matrix Detail Column */}
+                    <div className="lg:col-span-7">
+                      {selectedTeam === null ? (
+                        <div className="pro-card rounded-2xl p-16 text-center bg-white flex flex-col items-center justify-center min-h-[400px]">
+                          <div className="text-3xl mb-3">👈</div>
+                          <h3 className="font-heading font-bold text-base text-slate-800 mb-1">
+                            Select a Team to View Matrix
+                          </h3>
+                          <p className="text-xs text-slate-400 font-display">
+                            Click on any team on the left to inspect their Task 1, 2, and 3 submissions.
+                          </p>
+                        </div>
+                      ) : loadingTeam ? (
+                        <div className="pro-card rounded-2xl p-16 text-center bg-white flex flex-col items-center justify-center min-h-[400px]">
+                          <div className="w-8 h-8 rounded-full border-2 border-slate-200 border-t-teal-700 animate-spin mb-3" />
+                          <span className="font-mono text-xs uppercase tracking-wider text-slate-500 font-semibold">
+                            Loading Submissions for {selectedTeam}...
+                          </span>
+                        </div>
+                      ) : (
+                        <div className="space-y-4">
+                          {/* Selected Team Bar */}
+                          <div className="pro-card rounded-2xl p-5 bg-white flex items-center justify-between">
+                            <div>
+                              <div className="font-mono text-[10px] uppercase tracking-wider text-slate-400">
+                                Viewing Team Matrix
                               </div>
-
-                              {/* Links Rendering */}
-                              {(() => {
-                                let instaUrl = "";
-                                let linkedUrl = "";
-                                if (sub.answer) {
-                                  const im = sub.answer.match(/Instagram:\s*([^\r\n]+)/i);
-                                  if (im) instaUrl = im[1].trim();
-                                  const lm = sub.answer.match(/LinkedIn:\s*([^\r\n]+)/i);
-                                  if (lm) linkedUrl = lm[1].trim();
-                                }
-                                if (!instaUrl && sub.link && /instagram/i.test(sub.link)) {
-                                  instaUrl = sub.link.trim();
-                                }
-                                if (!linkedUrl && sub.link && (!instaUrl || /linkedin/i.test(sub.link))) {
-                                  linkedUrl = sub.link.trim();
-                                }
-
-                                if (instaUrl || linkedUrl) {
-                                  const instaHref = instaUrl.startsWith("http://") || instaUrl.startsWith("https://") ? instaUrl : `https://${instaUrl}`;
-                                  const linkedHref = linkedUrl.startsWith("http://") || linkedUrl.startsWith("https://") ? linkedUrl : `https://${linkedUrl}`;
-                                  return (
-                                    <div className="flex flex-wrap gap-2 mt-2.5">
-                                      {instaUrl && (
-                                        <a
-                                          href={instaHref}
-                                          target="_blank"
-                                          rel="noopener noreferrer"
-                                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono font-semibold bg-rose-50 border border-rose-200 text-rose-700 hover:bg-rose-100 transition-colors"
-                                        >
-                                          <span>📸 Instagram Post:</span>
-                                          <span className="truncate max-w-xs">{instaUrl}</span>
-                                        </a>
-                                      )}
-                                      {linkedUrl && (
-                                        <a
-                                          href={linkedHref}
-                                          target="_blank"
-                                          rel="noopener noreferrer"
-                                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono font-semibold bg-blue-50 border border-blue-200 text-blue-700 hover:bg-blue-100 transition-colors"
-                                        >
-                                          <span>💼 LinkedIn Post:</span>
-                                          <span className="truncate max-w-xs">{linkedUrl}</span>
-                                        </a>
-                                      )}
-                                    </div>
-                                  );
-                                }
-
-                                if (sub.link) {
-                                  return (
-                                    <a
-                                      href={sub.link}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="inline-flex items-center gap-1.5 text-xs font-mono text-teal-700 hover:underline mt-2.5"
-                                    >
-                                      <span>🔗 External URL:</span>
-                                      <span className="truncate max-w-md">{sub.link}</span>
-                                    </a>
-                                  );
-                                }
-
-                                return null;
-                              })()}
+                              <h2 className="font-heading font-bold text-xl text-slate-900">
+                                Team: {selectedTeam}
+                              </h2>
                             </div>
-                          ))}
+
+                            <button
+                              onClick={() => setSelectedTeam(null)}
+                              className="btn-secondary text-xs py-1.5 px-3"
+                            >
+                              Clear Selection
+                            </button>
+                          </div>
+
+                          {/* Render this team's matrix rows */}
+                          <div className="pro-card rounded-xl bg-white overflow-hidden border border-slate-200 shadow-xs">
+                            <div className="overflow-x-auto">
+                              <table className="w-full text-left border-collapse min-w-[700px]">
+                                <thead>
+                                  <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-mono uppercase tracking-wider text-slate-600">
+                                    <th className="py-3 px-4 w-44">Member</th>
+                                    <th className="py-3 px-4">Task 1: Poster</th>
+                                    <th className="py-3 px-4">Task 2: Multi-Link</th>
+                                    <th className="py-3 px-4">Task 3: Link</th>
+                                    <th className="py-3 px-4 text-center">Score</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100 text-xs">
+                                  {matrixRows.map((row) => (
+                                    <tr key={row.memberName} className="hover:bg-teal-50/20">
+                                      <td className="py-3 px-4 align-top">
+                                        <div className="font-heading font-bold text-slate-900">
+                                          {row.memberName}
+                                        </div>
+                                        {row.collegeName && (
+                                          <div className="text-[10px] font-mono text-slate-500">
+                                            {row.collegeName}
+                                          </div>
+                                        )}
+                                      </td>
+
+                                      {/* Task 1 */}
+                                      <td className="py-3 px-4 align-top">
+                                        {row.task1 ? (
+                                          <div>
+                                            <span className="text-[10px] font-mono font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+                                              ✓ Submitted
+                                            </span>
+                                            <div className="mt-1">
+                                              <button
+                                                onClick={() => {
+                                                  setEditingScore(row.task1!.id);
+                                                  setScoreValue(
+                                                    row.task1!.score !== null ? String(row.task1!.score) : ""
+                                                  );
+                                                }}
+                                                className="text-[11px] font-mono font-bold text-teal-800 hover:underline"
+                                              >
+                                                {row.task1.score !== null ? `${row.task1.score} / ${TASK_POINTS}` : "Assign Score"}
+                                              </button>
+                                            </div>
+                                          </div>
+                                        ) : (
+                                          <span className="text-slate-300 font-mono text-[10px]">—</span>
+                                        )}
+                                      </td>
+
+                                      {/* Task 2 */}
+                                      <td className="py-3 px-4 align-top">
+                                        {row.task2 ? (
+                                          <div>
+                                            <span className="text-[10px] font-mono font-bold text-teal-700 bg-teal-50 px-1.5 py-0.5 rounded border border-teal-200">
+                                              ✓ All Opened
+                                            </span>
+                                            <div className="mt-1">
+                                              <button
+                                                onClick={() => {
+                                                  setEditingScore(row.task2!.id);
+                                                  setScoreValue(
+                                                    row.task2!.score !== null ? String(row.task2!.score) : ""
+                                                  );
+                                                }}
+                                                className="text-[11px] font-mono font-bold text-teal-800 hover:underline"
+                                              >
+                                                {row.task2.score !== null ? `${row.task2.score} / ${TASK_POINTS}` : "Assign Score"}
+                                              </button>
+                                            </div>
+                                          </div>
+                                        ) : (
+                                          <span className="text-slate-300 font-mono text-[10px]">—</span>
+                                        )}
+                                      </td>
+
+                                      {/* Task 3 */}
+                                      <td className="py-3 px-4 align-top">
+                                        {row.task3 ? (
+                                          <div>
+                                            <span className="text-[10px] font-mono font-bold text-teal-700 bg-teal-50 px-1.5 py-0.5 rounded border border-teal-200">
+                                              ✓ Submitted
+                                            </span>
+                                            <div className="mt-1">
+                                              <button
+                                                onClick={() => {
+                                                  setEditingScore(row.task3!.id);
+                                                  setScoreValue(
+                                                    row.task3!.score !== null ? String(row.task3!.score) : ""
+                                                  );
+                                                }}
+                                                className="text-[11px] font-mono font-bold text-teal-800 hover:underline"
+                                              >
+                                                {row.task3.score !== null ? `${row.task3.score} / ${TASK_POINTS}` : "Assign Score"}
+                                              </button>
+                                            </div>
+                                          </div>
+                                        ) : (
+                                          <span className="text-slate-300 font-mono text-[10px]">—</span>
+                                        )}
+                                      </td>
+
+                                      {/* Total */}
+                                      <td className="py-3 px-4 align-top text-center font-mono font-bold text-slate-900">
+                                        {row.totalScore}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
                         </div>
                       )}
                     </div>
-                  )}
-                </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
