@@ -5,10 +5,14 @@ import Link from "next/link";
 import Task1PosterFlow from "@/components/Task1PosterFlow";
 import Task2MultiLinkFlow from "@/components/Task2MultiLinkFlow";
 import Task3LinkSubmissionFlow from "@/components/Task3LinkSubmissionFlow";
+import Task4TrackSelectionFlow from "@/components/Task4TrackSelectionFlow";
+import Task5PosterFlow from "@/components/Task5PosterFlow";
 
 const POSTER_TASK_ID = 1;
 const MULTI_LINK_TASK_ID = 2;
 const LINK_SUBMISSION_TASK_ID = 3;
+const TRACK_SELECTION_TASK_ID = 4;
+const POSTER_CAPTION_TASK_ID = 5;
 
 function readIdentityFromCookies() {
   if (typeof document === "undefined") {
@@ -41,6 +45,7 @@ interface TaskData {
   linkedin_template?: string | null;
   instagram_template?: string | null;
   links?: TaskLinkItem[];
+  poster_template_url?: string | null;
 }
 
 export default function TaskPage({ params }: { params: Promise<{ id: string }> }) {
@@ -357,6 +362,26 @@ export default function TaskPage({ params }: { params: Promise<{ id: string }> }
             collegeName={identity.college_name}
             futurePlan={identity.future_plan}
             alreadySubmitted={alreadySubmitted}
+          />
+        ) : task && task.id === TRACK_SELECTION_TASK_ID ? (
+          <Task4TrackSelectionFlow
+            taskId={task.id}
+            teamId={identity.team_id}
+            memberName={identity.member_name}
+            collegeName={identity.college_name}
+            futurePlan={identity.future_plan}
+            alreadySubmitted={alreadySubmitted}
+          />
+        ) : task && task.id === POSTER_CAPTION_TASK_ID ? (
+          <Task5PosterFlow
+            teamId={identity.team_id}
+            memberName={identity.member_name}
+            collegeName={identity.college_name}
+            futurePlan={identity.future_plan}
+            rules={task.rules}
+            customTemplate={task.linkedin_template}
+            customInstagramTemplate={task.instagram_template}
+            posterTemplateUrl={task.poster_template_url}
           />
         ) : (
           /* Submission Section */

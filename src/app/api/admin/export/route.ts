@@ -22,25 +22,41 @@ function buildRowsFromSubmissions(
     link: string | null;
     score: number | null;
     created_at: string;
+    track_id?: number | null;
   }[]
 ): (string | number)[][] {
-  return submissions.map((s) => [
-    s.team_id,
-    s.member_name,
-    s.college_name || "—",
-    s.future_plan || "—",
-    s.task_title,
-    s.answer,
-    s.link || "",
-    s.score === null || s.score === undefined ? "Not scored" : s.score,
-    new Date(s.created_at).toLocaleString("en-GB", {
-      day: "2-digit",
-      month: "short",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    }),
-  ]);
+  return submissions.map((s) => {
+    const baseRow = [
+      s.team_id,
+      s.member_name,
+      s.college_name || "—",
+      s.future_plan || "—",
+      s.task_title,
+      s.answer,
+      s.link || "",
+      s.score === null || s.score === undefined ? "Not scored" : s.score,
+      new Date(s.created_at).toLocaleString("en-GB", {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      }),
+    ];
+
+    // Add Task 4 specific columns
+    if (s.task_id === 4) {
+      // For Task 4: track selected, LinkedIn URL, score, submitted-at
+      // track selected comes from answer field or track_id
+      // LinkedIn URL comes from link field
+      const trackSelected = s.answer?.replace("Track selected: ", "") || (s.track_id ? `Track ${s.track_id}` : "");
+      const linkedInUrl = s.link || "";
+      return [...baseRow, trackSelected, linkedInUrl];
+    }
+
+    // For other tasks, add blank columns for Task 4 fields
+    return [...baseRow, "", ""];
+  });
 }
 
 function buildLeaderboardRows(
@@ -133,7 +149,7 @@ export async function GET(request: NextRequest) {
 
   let query = supabase
     .from("submissions")
-    .select("team_id, member_name, college_name, future_plan, task_id, answer, link, score, created_at");
+    .select("team_id, member_name, college_name, future_plan, task_id, answer, link, score, created_at, track_id");
 
   if (taskId) {
     const parsed = parseInt(taskId, 10);
@@ -159,7 +175,7 @@ export async function GET(request: NextRequest) {
   ) {
     let fallbackQuery = supabase
       .from("submissions")
-      .select("team_id, member_name, task_id, answer, link, score, created_at");
+      .select("team_id, member_name, task_id, answer, link, score, created_at, track_id");
     if (taskId) fallbackQuery = fallbackQuery.eq("task_id", parseInt(taskId, 10));
     if (teamId) fallbackQuery = fallbackQuery.eq("team_id", teamId);
     const retry = await fallbackQuery
@@ -169,6 +185,7 @@ export async function GET(request: NextRequest) {
       ...s,
       college_name: null,
       future_plan: null,
+      track_id: null,
     }));
     error = retry.error;
   }
@@ -232,6 +249,8 @@ export async function GET(request: NextRequest) {
     "Link",
     `Score / ${TASK_POINTS}`,
     "Submitted At",
+    "Track Selected (Task 4)",
+    "LinkedIn URL (Task 4)",
   ];
   const dataAoa = [dataHeader, ...buildRowsFromSubmissions(enriched)];
   const dataWs = XLSX.utils.aoa_to_sheet(dataAoa);

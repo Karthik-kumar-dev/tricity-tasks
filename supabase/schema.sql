@@ -11,13 +11,15 @@ CREATE TABLE IF NOT EXISTS tasks (
   is_active           BOOLEAN NOT NULL DEFAULT false,
   rules               TEXT,
   linkedin_template   TEXT,
-  instagram_template  TEXT
+  instagram_template  TEXT,
+  poster_template_url TEXT
 );
 
 -- Migration for existing tasks table in Supabase SQL Editor:
 -- ALTER TABLE tasks ADD COLUMN IF NOT EXISTS rules TEXT;
 -- ALTER TABLE tasks ADD COLUMN IF NOT EXISTS linkedin_template TEXT;
 -- ALTER TABLE tasks ADD COLUMN IF NOT EXISTS instagram_template TEXT;
+-- ALTER TABLE tasks ADD COLUMN IF NOT EXISTS poster_template_url TEXT;
 
 -- Submissions table with composite unique constraint
 CREATE TABLE IF NOT EXISTS submissions (
@@ -43,6 +45,7 @@ CREATE TABLE IF NOT EXISTS submissions (
 -- If you already have an existing submissions table, run this migration in Supabase SQL Editor:
 -- ALTER TABLE submissions ADD COLUMN IF NOT EXISTS college_name TEXT;
 -- ALTER TABLE submissions ADD COLUMN IF NOT EXISTS future_plan TEXT;
+-- ALTER TABLE submissions ADD COLUMN IF NOT EXISTS track_id INT;
 
 -- Index for fast team lookups
 CREATE INDEX IF NOT EXISTS idx_submissions_team_id ON submissions(team_id);
@@ -70,12 +73,12 @@ INSERT INTO tasks (title, description) VALUES
     'Five suspects, three clues, one truth. Use deductive reasoning to solve this logic grid. No guessing allowed — every conclusion must follow from the given constraints. Show your elimination steps.'
   ),
   (
-    'Task 4 — Code Challenge',
-    'Write a function that takes a list of timestamps and returns the longest streak of consecutive days with activity. Optimize for clarity and efficiency. Submit your code and a brief explanation of your approach.'
+    'Task 4 — Poster + Track Selection + LinkedIn URL',
+    'Download the common poster, select your track from the dropdown, download the track-specific poster, and submit your LinkedIn post URL. One submission per member.'
   ),
   (
-    'Task 5 — Final Showdown',
-    'Combine insights from all previous tasks to crack the final challenge. This is a multi-step puzzle that tests everything you have learned. The answer is a single phrase — choose wisely.'
+    'Task 5 — Poster with Photo Overlay + Captions',
+    'Upload your profile photo and we will overlay it onto the official poster template along with your name and college. Copy the ready-made Instagram and LinkedIn captions, share on social media, and submit your profile links. Instagram link is optional, LinkedIn link is required.'
   );
 
 -- ============================================================
@@ -145,4 +148,60 @@ CREATE TABLE IF NOT EXISTS task_link_clicks (
 
 CREATE INDEX IF NOT EXISTS idx_task_link_clicks_lookup
   ON task_link_clicks(team_id, member_name_normalized, task_id);
+
+-- ============================================================
+-- Task 4 — Poster + Track Selection + LinkedIn URL
+-- Run these migrations in Supabase SQL Editor:
+-- ============================================================
+
+-- Table for common poster (one per task, used by Task 4)
+CREATE TABLE IF NOT EXISTS task_posters (
+  id              SERIAL PRIMARY KEY,
+  task_id         INT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  poster_url      TEXT NOT NULL,
+  is_common       BOOLEAN NOT NULL DEFAULT true,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (task_id, is_common)
+);
+
+-- Table for tracks (Task 4 specific)
+CREATE TABLE IF NOT EXISTS tracks (
+  id              SERIAL PRIMARY KEY,
+  task_id         INT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  name            TEXT NOT NULL,
+  poster_url      TEXT,
+  display_order   INT NOT NULL DEFAULT 0,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (task_id, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_tracks_task_id ON tracks(task_id);
+
+-- Trigger to auto-update updated_at
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS update_task_posters_updated_at ON task_posters;
+CREATE TRIGGER update_task_posters_updated_at
+  BEFORE UPDATE ON task_posters
+  FOR EACH ROW
+  EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_tracks_updated_at ON tracks;
+CREATE TRIGGER update_tracks_updated_at
+  BEFORE UPDATE ON tracks
+  FOR EACH ROW
+  EXECUTE FUNCTION update_updated_at_column();
+
+-- Migration for existing tasks table to add common_poster_url column (optional, for Task 4)
+-- ALTER TABLE tasks ADD COLUMN IF NOT EXISTS common_poster_url TEXT;
 

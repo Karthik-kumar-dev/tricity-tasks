@@ -18,6 +18,7 @@ interface Task {
   rules?: string | null;
   linkedin_template?: string | null;
   instagram_template?: string | null;
+  poster_template_url?: string | null;
   links?: TaskLinkItem[];
 }
 
@@ -116,6 +117,740 @@ function parseCsvClient(csvText: string): {
   return { headers: rawHeaders, records };
 }
 
+interface Track {
+  id: number;
+  name: string;
+  poster_url: string | null;
+  display_order: number;
+}
+
+function Task4AdminConfig({ taskId }: { taskId: number }) {
+  const [commonPosterUrl, setCommonPosterUrl] = useState<string>("");
+  const [commonPosterFile, setCommonPosterFile] = useState<File | null>(null);
+  const [commonPosterPreview, setCommonPosterPreview] = useState<string>("");
+  const [tracks, setTracks] = useState<Track[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [savingCommonPoster, setSavingCommonPoster] = useState(false);
+  const [commonPosterMsg, setCommonPosterMsg] = useState("");
+  const [addingTrack, setAddingTrack] = useState(false);
+  const [newTrackName, setNewTrackName] = useState("");
+  const [newTrackPosterFile, setNewTrackPosterFile] = useState<File | null>(null);
+  const [newTrackPosterPreview, setNewTrackPosterPreview] = useState<string>("");
+  const [trackError, setTrackError] = useState("");
+  const [trackSuccess, setTrackSuccess] = useState("");
+  const [editingTrackPosterId, setEditingTrackPosterId] = useState<number | null>(null);
+  const [editingTrackPosterFile, setEditingTrackPosterFile] = useState<File | null>(null);
+  const [editingTrackPosterPreview, setEditingTrackPosterPreview] = useState<string>("");
+
+  useEffect(() => {
+    async function fetchData() {
+      setLoading(true);
+      try {
+        const [posterRes, tracksRes] = await Promise.all([
+          fetch(`/api/tasks/${taskId}/poster?type=common`),
+          fetch(`/api/tasks/${taskId}/tracks`),
+        ]);
+
+        const posterData = await posterRes.json();
+        if (posterData.poster_url) {
+          setCommonPosterUrl(posterData.poster_url);
+        }
+
+        const tracksData = await tracksRes.json();
+        if (tracksData.tracks && Array.isArray(tracksData.tracks)) {
+          setTracks(tracksData.tracks.sort((a: Track, b: Track) => a.display_order - b.display_order));
+        }
+      } catch {
+        // ignore
+      } finally {
+        setLoading(false);
+      }
+    }
+    fetchData();
+  }, [taskId]);
+
+  async function handleSaveCommonPoster() {
+    const fileToUpload = commonPosterFile;
+    const urlToSave = commonPosterUrl.trim();
+
+    if (!fileToUpload && !urlToSave) {
+      setCommonPosterMsg("Please select a file or enter a poster URL");
+      return;
+    }
+    setSavingCommonPoster(true);
+    setCommonPosterMsg("");
+    try {
+      let finalUrl = urlToSave;
+      if (fileToUpload) {
+        const formData = new FormData();
+        formData.append("file", fileToUpload);
+        formData.append("folder", `task-${taskId}/common`);
+
+        const uploadRes = await fetch("/api/admin/storage/upload", {
+          method: "POST",
+          body: formData,
+        });
+        const uploadData = await uploadRes.json();
+        if (!uploadRes.ok) {
+          setCommonPosterMsg(uploadData.error || "Failed to upload file");
+          return;
+        }
+        finalUrl = uploadData.url;
+      }
+
+      const res = await fetch(`/api/tasks/${taskId}/poster`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ poster_url: finalUrl, is_common: true }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setCommonPosterMsg(data.error || "Failed to save");
+        return;
+      }
+      setCommonPosterUrl(finalUrl);
+      setCommonPosterFile(null);
+      setCommonPosterPreview("");
+      setCommonPosterMsg("✓ Common poster saved successfully!");
+    } catch {
+      setCommonPosterMsg("Network error. Please try again.");
+    } finally {
+      setSavingCommonPoster(false);
+    }
+  }
+
+  async function handleAddTrack() {
+    if (!newTrackName.trim()) {
+      setTrackError("Track name is required");
+      return;
+    }
+    setAddingTrack(true);
+    setTrackError("");
+    setTrackSuccess("");
+    try {
+      let posterUrl = "";
+      if (newTrackPosterFile) {
+        const formData = new FormData();
+        formData.append("file", newTrackPosterFile);
+        formData.append("folder", `task-${taskId}/tracks`);
+
+        const uploadRes = await fetch("/api/admin/storage/upload", {
+          method: "POST",
+          body: formData,
+        });
+        const uploadData = await uploadRes.json();
+        if (!uploadRes.ok) {
+          setTrackError(uploadData.error || "Failed to upload track poster");
+          return;
+        }
+        posterUrl = uploadData.url;
+      }
+
+      const res = await fetch(`/api/tasks/${taskId}/tracks`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: newTrackName.trim(),
+          poster_url: posterUrl || null,
+          display_order: tracks.length,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setTrackError(data.error || "Failed to add track");
+        return;
+      }
+      setTracks((prev) => [...prev, data.track].sort((a, b) => a.display_order - b.display_order));
+      setNewTrackName("");
+      setNewTrackPosterFile(null);
+      setNewTrackPosterPreview("");
+      setTrackSuccess("✓ Track added successfully!");
+    } catch {
+      setTrackError("Network error. Please try again.");
+    } finally {
+      setAddingTrack(false);
+    }
+  }
+
+  async function handleUpdateTrack(track: Track, updates: Partial<Track>) {
+    try {
+      const res = await fetch(`/api/tasks/${taskId}/tracks/${track.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updates),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || "Failed to update track");
+        return;
+      }
+      setTracks((prev) => prev.map((t) => (t.id === track.id ? { ...t, ...data.track } : t)).sort((a, b) => a.display_order - b.display_order));
+    } catch {
+      alert("Network error. Please try again.");
+    }
+  }
+
+  async function handleDeleteTrack(trackId: number) {
+    if (!confirm("Are you sure you want to delete this track?")) return;
+    try {
+      const res = await fetch(`/api/tasks/${taskId}/tracks/${trackId}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        alert(data.error || "Failed to delete track");
+        return;
+      }
+      setTracks((prev) => prev.filter((t) => t.id !== trackId));
+    } catch {
+      alert("Network error. Please try again.");
+    }
+  }
+
+  async function handleUpdateTrackPoster(track: Track) {
+    if (editingTrackPosterId === track.id) {
+      // Save the uploaded file
+      if (!editingTrackPosterFile) {
+        alert("Please select a file first");
+        return;
+      }
+      const formData = new FormData();
+      formData.append("file", editingTrackPosterFile);
+      formData.append("folder", `task-${taskId}/tracks`);
+
+      const uploadRes = await fetch("/api/admin/storage/upload", {
+        method: "POST",
+        body: formData,
+      });
+      const uploadData = await uploadRes.json();
+      if (!uploadRes.ok) {
+        alert(uploadData.error || "Failed to upload track poster");
+        return;
+      }
+      await handleUpdateTrack(track, { poster_url: uploadData.url });
+      setEditingTrackPosterId(null);
+      setEditingTrackPosterFile(null);
+      setEditingTrackPosterPreview("");
+    } else {
+      // Show file input
+      setEditingTrackPosterId(track.id);
+      setEditingTrackPosterFile(null);
+      setEditingTrackPosterPreview("");
+    }
+  }
+
+  async function handleReorderTrack(track: Track, direction: -1 | 1) {
+    const idx = tracks.findIndex((t) => t.id === track.id);
+    const targetIdx = idx + direction;
+    if (targetIdx < 0 || targetIdx >= tracks.length) return;
+    const newTracks = [...tracks];
+    const [moved] = newTracks.splice(idx, 1);
+    newTracks.splice(targetIdx, 0, moved);
+    const updatedTracks = newTracks.map((t, i) => ({ ...t, display_order: i }));
+    setTracks(updatedTracks);
+    // Persist new order
+    for (const t of updatedTracks) {
+      if (t.display_order !== tracks.find((ot) => ot.id === t.id)?.display_order) {
+        await handleUpdateTrack(t, { display_order: t.display_order });
+      }
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 text-center">
+        <div className="w-8 h-8 rounded-full border-2 border-slate-200 border-t-teal-700 animate-spin mx-auto mb-2" />
+        <span className="font-mono text-xs uppercase tracking-widest text-slate-500 font-semibold">
+          Loading Task 4 Config...
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-5">
+      {/* Common Poster Manager */}
+      <div className="p-5 rounded-xl bg-blue-50/60 border border-blue-200 space-y-4">
+        <div className="flex items-center gap-2">
+          <span className="text-base">📋</span>
+          <h5 className="font-heading font-bold text-sm text-blue-900">Common Poster (Shared by All Participants)</h5>
+        </div>
+        <p className="text-xs text-blue-700 font-display">
+          This poster is visible to everyone and can be downloaded without selecting a track.
+        </p>
+        <div className="space-y-3">
+          <div className="flex flex-col sm:flex-row gap-3">
+            <div className="flex-1">
+              <label className="block text-[11px] font-mono font-semibold uppercase text-slate-600 mb-1">
+                Upload Poster Image (PNG/JPG/WebP, max 10MB)
+              </label>
+              <input
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    setCommonPosterFile(file);
+                    setCommonPosterPreview(URL.createObjectURL(file));
+                  }
+                }}
+                className="input-field text-xs bg-white border-blue-200"
+              />
+            </div>
+          </div>
+          {commonPosterPreview && (
+            <div className="flex items-center gap-2 p-2 bg-blue-50 border border-blue-200 rounded-lg">
+              <img src={commonPosterPreview} alt="Preview" className="w-16 h-16 object-cover rounded" />
+              <span className="text-xs font-mono text-blue-700">Preview ready</span>
+            </div>
+          )}
+          {commonPosterUrl && !commonPosterPreview && (
+            <div className="flex items-center gap-2 p-2 bg-blue-50 border border-blue-200 rounded-lg">
+              <img src={commonPosterUrl} alt="Current" className="w-16 h-16 object-cover rounded" />
+              <a href={commonPosterUrl} target="_blank" rel="noopener noreferrer" className="text-xs font-mono text-blue-700 hover:underline">
+                Current Poster
+              </a>
+            </div>
+          )}
+          <div className="flex flex-col sm:flex-row gap-3">
+            <input
+              type="url"
+              value={commonPosterUrl}
+              onChange={(e) => setCommonPosterUrl(e.target.value)}
+              placeholder="Or enter poster URL manually"
+              className="input-field text-xs flex-1 font-mono bg-white border-blue-200"
+            />
+            <button
+              type="button"
+              onClick={handleSaveCommonPoster}
+              disabled={savingCommonPoster}
+              className="btn-primary text-xs px-4 py-2 whitespace-nowrap shrink-0"
+            >
+              {savingCommonPoster ? "Saving..." : "Save Common Poster"}
+            </button>
+          </div>
+        {commonPosterMsg && (
+          <div className={`text-xs font-mono ${commonPosterMsg.startsWith("✓") ? "text-emerald-700" : "text-red-700"}`}>
+            {commonPosterMsg}
+          </div>
+        )}
+      </div>
+
+      {/* Tracks Manager */}
+      <div className="p-5 rounded-xl bg-purple-50/60 border border-purple-200 space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="text-base">🎯</span>
+            <h5 className="font-heading font-bold text-sm text-purple-900">Track Manager ({tracks.length})</h5>
+          </div>
+          <p className="text-[11px] font-mono text-purple-600">Add, edit, reorder, or remove tracks. Each track can have its own poster.</p>
+        </div>
+
+        {/* Add Track Form */}
+        <div className="p-4 rounded-lg bg-white border border-purple-200 space-y-3">
+          <div className="grid sm:grid-cols-3 gap-3">
+            <div>
+              <label className="block text-[11px] font-mono font-semibold uppercase text-slate-600 mb-1">
+                Track Name <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                value={newTrackName}
+                onChange={(e) => setNewTrackName(e.target.value)}
+                placeholder="e.g. AI/ML, Web Dev, Mobile"
+                className="input-field text-xs bg-slate-50/50"
+              />
+            </div>
+            <div>
+              <label className="block text-[11px] font-mono font-semibold uppercase text-slate-600 mb-1">
+                Poster Image (Optional)
+              </label>
+              <input
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    setNewTrackPosterFile(file);
+                    setNewTrackPosterPreview(URL.createObjectURL(file));
+                  }
+                }}
+                className="input-field text-xs bg-slate-50/50"
+              />
+              {newTrackPosterPreview && (
+                <div className="mt-1 flex items-center gap-2">
+                  <img src={newTrackPosterPreview} alt="Preview" className="w-10 h-10 object-cover rounded" />
+                  <span className="text-xs font-mono text-slate-500">Ready to upload</span>
+                </div>
+              )}
+            </div>
+            <div className="flex items-end">
+              <button
+                type="button"
+                onClick={handleAddTrack}
+                disabled={addingTrack}
+                className="btn-secondary text-xs px-4 py-2 w-full"
+              >
+                {addingTrack ? "Adding..." : "+ Add Track"}
+              </button>
+            </div>
+          </div>
+          {trackError && <div className="text-xs font-mono text-red-700">{trackError}</div>}
+          {trackSuccess && <div className="text-xs font-mono text-emerald-700">{trackSuccess}</div>}
+        </div>
+
+        {/* Tracks List */}
+        {tracks.length === 0 ? (
+          <>
+            <div className="p-6 rounded-lg bg-white border border-dashed border-purple-300 text-center">
+              <p className="text-xs text-slate-500 font-mono mb-3">
+                No tracks configured yet. Add the first track above.
+              </p>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="space-y-3">
+              {tracks.map((track) => (
+                <div
+                  key={track.id}
+                  className="p-4 rounded-lg bg-white border border-slate-200 shadow-2xs space-y-3"
+                >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="w-6 h-6 rounded-md bg-purple-100 text-purple-800 font-mono text-xs font-bold flex items-center justify-center">
+                      #{track.display_order + 1}
+                    </span>
+                    <span className="font-heading font-bold text-sm text-slate-900">{track.name}</span>
+                    {track.poster_url && (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-50 border border-emerald-200 text-emerald-700 text-[10px] font-mono font-semibold">
+                        📎 Has Poster
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      disabled={track.display_order === 0}
+                      onClick={() => handleReorderTrack(track, -1)}
+                      className="w-7 h-7 rounded border border-slate-200 hover:bg-slate-100 disabled:opacity-30 flex items-center justify-center text-xs text-slate-600 cursor-pointer"
+                      title="Move up"
+                    >
+                      ↑
+                    </button>
+                    <button
+                      type="button"
+                      disabled={track.display_order === tracks.length - 1}
+                      onClick={() => handleReorderTrack(track, 1)}
+                      className="w-7 h-7 rounded border border-slate-200 hover:bg-slate-100 disabled:opacity-30 flex items-center justify-center text-xs text-slate-600 cursor-pointer"
+                      title="Move down"
+                    >
+                      ↓
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleUpdateTrackPoster(track)}
+                      className="w-7 h-7 rounded border border-purple-200 hover:bg-purple-50 text-purple-700 flex items-center justify-center text-xs cursor-pointer"
+                      title={track.poster_url ? "Change Track Poster" : "Add Track Poster"}
+                    >
+                      📎
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteTrack(track.id)}
+                      className="w-7 h-7 rounded border border-red-200 hover:bg-red-50 text-red-600 flex items-center justify-center text-xs cursor-pointer ml-1"
+                      title="Remove this track"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                </div>
+
+                {editingTrackPosterId === track.id ? (
+                  <div className="flex flex-col sm:flex-row gap-2 p-3 bg-purple-50 border border-purple-200 rounded-lg">
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          setEditingTrackPosterFile(file);
+                          setEditingTrackPosterPreview(URL.createObjectURL(file));
+                        }
+                      }}
+                      className="input-field text-xs flex-1"
+                    />
+                    {editingTrackPosterPreview && (
+                      <img src={editingTrackPosterPreview} alt="Preview" className="w-12 h-12 object-cover rounded" />
+                    )}
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleUpdateTrackPoster(track)}
+                        disabled={!editingTrackPosterFile}
+                        className="btn-primary text-xs px-3 py-1"
+                      >
+                        Save Poster
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingTrackPosterId(null);
+                          setEditingTrackPosterFile(null);
+                          setEditingTrackPosterPreview("");
+                        }}
+                        className="btn-secondary text-xs px-3 py-1"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : track.poster_url ? (
+                  <div className="flex items-center gap-2">
+                    <img src={track.poster_url} alt="Poster" className="w-12 h-12 object-cover rounded border border-purple-200" />
+                    <a
+                      href={track.poster_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs font-mono text-purple-700 hover:underline truncate max-w-[200px]"
+                    >
+                      View Poster
+                    </a>
+                  </div>
+                ) : (
+                  <span className="text-[11px] font-mono text-slate-400">No poster uploaded</span>
+                )}
+              </div>
+            ))}
+              </div>
+            </>
+          )}
+</div>
+      </div>
+    </div>
+  );
+}
+
+interface Task5AdminConfigProps {
+  taskId: number;
+  linkedinTemplate: string;
+  setLinkedinTemplate: (v: string) => void;
+  instagramTemplate: string;
+  setInstagramTemplate: (v: string) => void;
+  posterTemplateUrl: string;
+}
+
+function Task5AdminConfig({
+  taskId,
+  linkedinTemplate,
+  setLinkedinTemplate,
+  instagramTemplate,
+  setInstagramTemplate,
+  posterTemplateUrl: initialPosterTemplateUrl,
+}: Task5AdminConfigProps) {
+  const [posterTemplateUrl, setPosterTemplateUrl] = useState<string>(initialPosterTemplateUrl);
+  const [posterTemplateFile, setPosterTemplateFile] = useState<File | null>(null);
+  const [posterTemplatePreview, setPosterTemplatePreview] = useState<string>("");
+  const [loading, setLoading] = useState(true);
+  const [savingTemplate, setSavingTemplate] = useState(false);
+  const [templateMsg, setTemplateMsg] = useState("");
+
+  useEffect(() => {
+    async function fetchData() {
+      setLoading(true);
+      try {
+        const res = await fetch(`/api/tasks/${taskId}/poster-template`);
+        const data = await res.json();
+        if (data.poster_template_url) {
+          setPosterTemplateUrl(data.poster_template_url);
+        }
+      } catch {
+        // ignore
+      } finally {
+        setLoading(false);
+      }
+    }
+    fetchData();
+  }, [taskId]);
+
+  async function handleSaveTemplate() {
+    const fileToUpload = posterTemplateFile;
+    const urlToSave = posterTemplateUrl.trim();
+
+    if (!fileToUpload && !urlToSave) {
+      setTemplateMsg("Please select a file or enter a poster template URL");
+      return;
+    }
+    setSavingTemplate(true);
+    setTemplateMsg("");
+    try {
+      let finalUrl = urlToSave;
+      if (fileToUpload) {
+        const formData = new FormData();
+        formData.append("file", fileToUpload);
+        formData.append("folder", `task-${taskId}/template`);
+
+        const uploadRes = await fetch("/api/admin/storage/upload", {
+          method: "POST",
+          body: formData,
+        });
+        const uploadData = await uploadRes.json();
+        if (!uploadRes.ok) {
+          setTemplateMsg(uploadData.error || "Failed to upload file");
+          return;
+        }
+        finalUrl = uploadData.url;
+      }
+
+      const res = await fetch(`/api/tasks/${taskId}/poster-template`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ poster_template_url: finalUrl }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setTemplateMsg(data.error || "Failed to save");
+        return;
+      }
+      setPosterTemplateUrl(finalUrl);
+      setPosterTemplateFile(null);
+      setPosterTemplatePreview("");
+      setTemplateMsg("✓ Poster template saved successfully!");
+    } catch {
+      setTemplateMsg("Network error. Please try again.");
+    } finally {
+      setSavingTemplate(false);
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 text-center">
+        <div className="w-8 h-8 rounded-full border-2 border-slate-200 border-t-teal-700 animate-spin mx-auto mb-2" />
+        <span className="font-mono text-xs uppercase tracking-widest text-slate-500 font-semibold">
+          Loading Task 5 Config...
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-5">
+      {/* Poster Template Manager */}
+      <div className="p-5 rounded-xl bg-indigo-50/60 border border-indigo-200 space-y-4">
+        <div className="flex items-center gap-2">
+          <span className="text-base">🖼️</span>
+          <h5 className="font-heading font-bold text-sm text-indigo-900">Poster Template (Admin Upload)</h5>
+        </div>
+        <p className="text-xs text-indigo-700 font-display">
+          This template is used for the photo overlay. Name and college text positions are fixed in the template design.
+        </p>
+        <div className="space-y-3">
+          <div className="flex flex-col sm:flex-row gap-3">
+            <div className="flex-1">
+              <label className="block text-[11px] font-mono font-semibold uppercase text-slate-600 mb-1">
+                Upload Poster Template Image (PNG/JPG/WebP, max 10MB)
+              </label>
+              <input
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    setPosterTemplateFile(file);
+                    setPosterTemplatePreview(URL.createObjectURL(file));
+                  }
+                }}
+                className="input-field text-xs bg-white border-indigo-200"
+              />
+            </div>
+          </div>
+          {posterTemplatePreview && (
+            <div className="flex items-center gap-2 p-2 bg-indigo-50 border border-indigo-200 rounded-lg">
+              <img src={posterTemplatePreview} alt="Preview" className="w-16 h-16 object-cover rounded" />
+              <span className="text-xs font-mono text-indigo-700">Preview ready</span>
+            </div>
+          )}
+          {posterTemplateUrl && !posterTemplatePreview && (
+            <div className="flex items-center gap-2 p-2 bg-indigo-50 border border-indigo-200 rounded-lg">
+              <img src={posterTemplateUrl} alt="Current" className="w-16 h-16 object-cover rounded" />
+              <a href={posterTemplateUrl} target="_blank" rel="noopener noreferrer" className="text-xs font-mono text-indigo-700 hover:underline">
+                Current Template
+              </a>
+            </div>
+          )}
+          <div className="flex flex-col sm:flex-row gap-3">
+            <input
+              type="url"
+              value={posterTemplateUrl}
+              onChange={(e) => setPosterTemplateUrl(e.target.value)}
+              placeholder="Or enter poster template URL manually"
+              className="input-field text-xs flex-1 font-mono bg-white border-indigo-200"
+            />
+            <button
+              type="button"
+              onClick={handleSaveTemplate}
+              disabled={savingTemplate}
+              className="btn-primary text-xs px-4 py-2 whitespace-nowrap shrink-0"
+            >
+              {savingTemplate ? "Saving..." : "Save Poster Template"}
+            </button>
+          </div>
+        </div>
+        {templateMsg && (
+          <div className={`text-xs font-mono ${templateMsg.startsWith("✓") ? "text-emerald-700" : "text-red-700"}`}>
+            {templateMsg}
+          </div>
+        )}
+      </div>
+
+      {/* LinkedIn Caption Template Editor */}
+      <div className="p-4 rounded-xl bg-blue-50/60 border border-blue-200">
+        <div className="flex items-center justify-between mb-1.5">
+          <label className="block text-xs font-mono font-semibold uppercase text-blue-900">
+            💼 LinkedIn Caption Template
+          </label>
+          <span className="text-[11px] font-mono text-blue-600 font-semibold">
+            Placeholders: &#123;name&#125; & &#123;college&#125;
+          </span>
+        </div>
+        <textarea
+          rows={6}
+          className="input-field text-xs sm:text-sm font-mono leading-relaxed bg-white border-blue-200"
+          value={linkedinTemplate}
+          onChange={(e) => setLinkedinTemplate(e.target.value)}
+          placeholder="I am thrilled to announce that I've joined the Tri-City Hackathon 2026! Name: {name}, College: {college}..."
+        />
+        <p className="text-[11px] text-blue-700 mt-1.5 font-display">
+          When participants click &ldquo;Copy LinkedIn Caption&rdquo; in Task 5, &#123;name&#125; will automatically be replaced with their title-cased name and &#123;college&#125; with their institution.
+        </p>
+      </div>
+
+      {/* Instagram Caption Template Editor */}
+      <div className="p-4 rounded-xl bg-rose-50/60 border border-rose-200">
+        <div className="flex items-center justify-between mb-1.5">
+          <label className="block text-xs font-mono font-semibold uppercase text-rose-900">
+            📸 Instagram Caption Template
+          </label>
+          <span className="text-[11px] font-mono text-rose-600 font-semibold">
+            Placeholders: &#123;name&#125; & &#123;college&#125;
+          </span>
+        </div>
+        <textarea
+          rows={6}
+          className="input-field text-xs sm:text-sm font-mono leading-relaxed bg-white border-rose-200"
+          value={instagramTemplate}
+          onChange={(e) => setInstagramTemplate(e.target.value)}
+          placeholder="Registered for the TRI-CITY AI HACKATHON 2026! Name: {name}, College: {college}..."
+        />
+        <p className="text-[11px] text-rose-700 mt-1.5 font-display">
+          When participants click &ldquo;Copy Instagram Caption&rdquo; in Task 5, &#123;name&#125; will automatically be replaced with their title-cased name and &#123;college&#125; with their institution.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export default function AdminPage() {
   const [authenticated, setAuthenticated] = useState(false);
   const [checking, setChecking] = useState(true);
@@ -177,7 +912,7 @@ export default function AdminPage() {
   const [allSubmissions, setAllSubmissions] = useState<Submission[]>([]);
   const [loadingAllSubmissions, setLoadingAllSubmissions] = useState(false);
   const [submissionsViewMode, setSubmissionsViewMode] = useState<"matrix" | "leaderboard">("matrix");
-  const [matrixTaskFilter, setMatrixTaskFilter] = useState<"all" | "1" | "2" | "3">("all");
+  const [matrixTaskFilter, setMatrixTaskFilter] = useState<"all" | "1" | "2" | "3" | "4" | "5">("all");
   const [matrixScoreFilter, setMatrixScoreFilter] = useState<"all" | "unscored" | "scored">("all");
 
   // Export state
@@ -809,6 +1544,8 @@ export default function AdminPage() {
     task1?: Submission;
     task2?: Submission;
     task3?: Submission;
+    task4?: Submission;
+    task5?: Submission;
     totalScore: number;
     submittedCount: number;
     lastCreatedAt?: string;
@@ -843,6 +1580,8 @@ export default function AdminPage() {
       if (sub.task_id === 1) row.task1 = sub;
       else if (sub.task_id === 2) row.task2 = sub;
       else if (sub.task_id === 3) row.task3 = sub;
+      else if (sub.task_id === 4) row.task4 = sub;
+      else if (sub.task_id === 5) row.task5 = sub;
 
       if (typeof sub.score === "number") {
         row.totalScore += sub.score;
@@ -881,6 +1620,10 @@ export default function AdminPage() {
       result = result.filter((r) => Boolean(r.task2));
     } else if (matrixTaskFilter === "3") {
       result = result.filter((r) => Boolean(r.task3));
+    } else if (matrixTaskFilter === "4") {
+      result = result.filter((r) => Boolean(r.task4));
+    } else if (matrixTaskFilter === "5") {
+      result = result.filter((r) => Boolean(r.task5));
     }
 
     // Score filter
@@ -1423,7 +2166,7 @@ export default function AdminPage() {
                           </div>
                         )}
 
-                        {/* Task 3: Information note */}
+{/* Task 3: Information note */}
                         {task.id === 3 && (
                           <div className="p-4 rounded-xl bg-teal-50/60 border border-teal-200">
                             <div className="flex items-center gap-2 mb-1">
@@ -1433,9 +2176,26 @@ export default function AdminPage() {
                               </h5>
                             </div>
                             <p className="text-xs text-teal-800 font-display leading-relaxed">
-                              Participants submit a single URL link for Task 3. Use the <strong>Official Task Rules &amp; Evaluation Guidelines</strong> field above to provide prompt instructions or requirements. The rules can be edited anytime and update on user screens immediately.
+                              Participants submit a single URL link for Task 3. Use the <strong>Official Task Rules & Evaluation Guidelines</strong> field above to provide prompt instructions or requirements. The rules can be edited anytime and update on user screens immediately.
                             </p>
                           </div>
+                        )}
+
+                        {/* Task 4: Poster + Track Selection Configuration */}
+                        {task.id === 4 && (
+                          <Task4AdminConfig taskId={task.id} />
+                        )}
+
+                        {/* Task 5: Poster with Photo Overlay + Captions Configuration */}
+                        {task.id === 5 && (
+                          <Task5AdminConfig
+                            taskId={task.id}
+                            linkedinTemplate={taskEditTemplate}
+                            setLinkedinTemplate={setTaskEditTemplate}
+                            instagramTemplate={taskEditInstagramTemplate}
+                            setInstagramTemplate={setTaskEditInstagramTemplate}
+                            posterTemplateUrl={task.poster_template_url || ""}
+                          />
                         )}
 
                         {/* Status Messages */}
@@ -1612,6 +2372,24 @@ export default function AdminPage() {
                     >
                       T3
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => setMatrixTaskFilter("4")}
+                      className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+                        matrixTaskFilter === "4" ? "bg-white text-purple-800 shadow-2xs" : "text-slate-500 hover:text-slate-900"
+                      }`}
+                    >
+                      T4
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMatrixTaskFilter("5")}
+                      className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+                        matrixTaskFilter === "5" ? "bg-white text-indigo-800 shadow-2xs" : "text-slate-500 hover:text-slate-900"
+                      }`}
+                    >
+                      T5
+                    </button>
                   </div>
 
                   {/* Score Filter */}
@@ -1700,13 +2478,15 @@ export default function AdminPage() {
                 ) : (
                   <div className="overflow-x-auto">
                     <table className="w-full text-left border-collapse min-w-[900px]">
-                      <thead>
+<thead>
                         <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-mono uppercase tracking-wider text-slate-600">
                           <th className="py-3 px-4 w-28">Team ID</th>
                           <th className="py-3 px-4 w-48">Member Info</th>
-                          <th className="py-3 px-4 w-60">Task 1: Poster &amp; Social</th>
+                          <th className="py-3 px-4 w-60">Task 1: Poster & Social</th>
                           <th className="py-3 px-4 w-52">Task 2: Multi-Link</th>
                           <th className="py-3 px-4 w-60">Task 3: Link Submission</th>
+                          <th className="py-3 px-4 w-56">Task 4: Track Selection</th>
+                          <th className="py-3 px-4 w-56">Task 5: Poster + Captions</th>
                           <th className="py-3 px-4 w-28 text-center">Total Score</th>
                           <th className="py-3 px-3 w-16 text-center">Action</th>
                         </tr>
@@ -2054,6 +2834,246 @@ export default function AdminPage() {
                                 )}
                               </td>
 
+                              {/* Task 4: Track Selection */}
+                              <td className="py-3.5 px-4 align-top bg-slate-50/30">
+                                {row.task4 ? (
+                                  <div className="space-y-1.5">
+                                    <div className="flex items-center justify-between">
+                                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-purple-100 text-purple-800">
+                                        ✓ Submitted
+                                      </span>
+                                      <button
+                                        onClick={() =>
+                                          setConfirmAction({
+                                            type: "submission",
+                                            id: row.task4!.id,
+                                            label: `Task 4 submission by "${row.memberName}"`,
+                                          })
+                                        }
+                                        className="text-slate-300 hover:text-red-600 p-0.5 text-xs"
+                                        title="Delete Task 4 submission"
+                                      >
+                                        🗑
+                                      </button>
+                                    </div>
+
+                                    {/* Track info */}
+                                    <div className="space-y-1">
+                                      <div className="text-[11px] font-mono text-purple-700">
+                                        Track: {row.task4.answer?.replace("Track selected: ", "") || "—"}
+                                      </div>
+                                      {row.task4.link && (
+                                        <div className="truncate max-w-[200px]">
+                                          <a
+                                            href={
+                                              row.task4.link.startsWith("http")
+                                                ? row.task4.link
+                                                : `https://${row.task4.link}`
+                                            }
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="inline-flex items-center gap-1 text-[11px] font-mono text-blue-700 hover:underline truncate"
+                                            title={row.task4.link}
+                                          >
+                                            <span>💼 LinkedIn ↗</span>
+                                            <span className="truncate max-w-[140px] text-slate-500">
+                                              {row.task4.link}
+                                            </span>
+                                          </a>
+                                        </div>
+                                      )}
+                                    </div>
+
+                                    {/* Inline Score */}
+                                    {editingScore === row.task4.id ? (
+                                      <div className="flex items-center gap-1 pt-1">
+                                        <input
+                                          type="number"
+                                          min="0"
+                                          max={TASK_POINTS}
+                                          className="input-field w-14 text-center text-xs py-0.5 px-1 font-mono"
+                                          value={scoreValue}
+                                          onChange={(e) => setScoreValue(e.target.value)}
+                                          autoFocus
+                                          onKeyDown={(e) => {
+                                            if (e.key === "Enter") saveScore(row.task4!.id);
+                                            if (e.key === "Escape") setEditingScore(null);
+                                          }}
+                                        />
+                                        <button
+                                          onClick={() => saveScore(row.task4!.id)}
+                                          disabled={savingScore}
+                                          className="px-2 py-0.5 rounded bg-emerald-600 text-white font-mono text-xs font-bold"
+                                        >
+                                          ✓
+                                        </button>
+                                        <button
+                                          onClick={() => setEditingScore(null)}
+                                          className="px-1.5 py-0.5 rounded bg-slate-200 text-slate-700 font-mono text-xs"
+                                        >
+                                          ✕
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <button
+                                        onClick={() => {
+                                          setEditingScore(row.task4!.id);
+                                          setScoreValue(
+                                            row.task4!.score !== null ? String(row.task4!.score) : ""
+                                          );
+                                        }}
+                                        className={`px-2.5 py-0.5 rounded text-[11px] font-mono font-bold border transition-all cursor-pointer block ${
+                                          row.task4.score !== null
+                                            ? "bg-emerald-50 border-emerald-300 text-emerald-800 hover:bg-emerald-100"
+                                            : "bg-amber-50 border-amber-300 text-amber-800 hover:bg-amber-100"
+                                        }`}
+                                      >
+                                        {row.task4.score !== null ? `Score: ${row.task4.score} / ${TASK_POINTS}` : "Assign Score"}
+                                      </button>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <span className="text-slate-300 font-mono text-[11px]">
+                                    — Not submitted
+                                  </span>
+                                )}
+                              </td>
+
+                              {/* Task 5: Poster + Captions */}
+                              <td className="py-3.5 px-4 align-top bg-slate-50/30">
+                                {row.task5 ? (
+                                  <div className="space-y-1.5">
+                                    <div className="flex items-center justify-between">
+                                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-indigo-100 text-indigo-800">
+                                        ✓ Submitted
+                                      </span>
+                                      <button
+                                        onClick={() =>
+                                          setConfirmAction({
+                                            type: "submission",
+                                            id: row.task5!.id,
+                                            label: `Task 5 submission by "${row.memberName}"`,
+                                          })
+                                        }
+                                        className="text-slate-300 hover:text-red-600 p-0.5 text-xs"
+                                        title="Delete Task 5 submission"
+                                      >
+                                        🗑
+                                      </button>
+                                    </div>
+
+                                    {/* Links */}
+                                    <div className="space-y-1">
+                                      {(() => {
+                                        let insta = "";
+                                        let linked = "";
+                                        if (row.task5.answer) {
+                                          const im = row.task5.answer.match(/Instagram:\s*([^\r\n]+)/i);
+                                          if (im) insta = im[1].trim();
+                                          const lm = row.task5.answer.match(/LinkedIn:\s*([^\r\n]+)/i);
+                                          if (lm) linked = lm[1].trim();
+                                        }
+                                        // Fallback: if answer doesn't have prefixes but link exists
+                                        if (!insta && !linked && row.task5.link) {
+                                          linked = row.task5.link.trim();
+                                        }
+                                        // If only one URL in answer without prefix, guess based on link field
+                                        if (!insta && !linked && row.task5.answer && !row.task5.answer.includes(":")) {
+                                          const urls = row.task5.answer.split(/\s+/).filter(Boolean);
+                                          if (urls.length === 1) {
+                                            if (row.task5.link && urls[0] === row.task5.link.trim()) {
+                                              linked = urls[0];
+                                            } else {
+                                              insta = urls[0];
+                                            }
+                                          }
+                                        }
+
+                                        const linkedHref = linked.startsWith("http") ? linked : `https://${linked}`;
+                                        const instaHref = insta.startsWith("http") ? insta : `https://${insta}`;
+
+                                        return (
+                                          <div className="flex flex-wrap gap-1">
+                                            {linked && (
+                                              <a
+                                                href={linkedHref}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-blue-50 border border-blue-200 text-blue-700 hover:bg-blue-100"
+                                              >
+                                                <span>💼 LinkedIn ↗</span>
+                                              </a>
+                                            )}
+                                            {insta && (
+                                              <a
+                                                href={instaHref}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-rose-50 border border-rose-200 text-rose-700 hover:bg-rose-100"
+                                              >
+                                                <span>📸 Instagram ↗</span>
+                                              </a>
+                                            )}
+                                          </div>
+                                        );
+                                      })()}
+                                    </div>
+
+                                    {/* Inline Score */}
+                                    {editingScore === row.task5.id ? (
+                                      <div className="flex items-center gap-1 pt-1">
+                                        <input
+                                          type="number"
+                                          min="0"
+                                          max={TASK_POINTS}
+                                          className="input-field w-14 text-center text-xs py-0.5 px-1 font-mono"
+                                          value={scoreValue}
+                                          onChange={(e) => setScoreValue(e.target.value)}
+                                          autoFocus
+                                          onKeyDown={(e) => {
+                                            if (e.key === "Enter") saveScore(row.task5!.id);
+                                            if (e.key === "Escape") setEditingScore(null);
+                                          }}
+                                        />
+                                        <button
+                                          onClick={() => saveScore(row.task5!.id)}
+                                          disabled={savingScore}
+                                          className="px-2 py-0.5 rounded bg-emerald-600 text-white font-mono text-xs font-bold"
+                                        >
+                                          ✓
+                                        </button>
+                                        <button
+                                          onClick={() => setEditingScore(null)}
+                                          className="px-1.5 py-0.5 rounded bg-slate-200 text-slate-700 font-mono text-xs"
+                                        >
+                                          ✕
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <button
+                                        onClick={() => {
+                                          setEditingScore(row.task5!.id);
+                                          setScoreValue(
+                                            row.task5!.score !== null ? String(row.task5!.score) : ""
+                                          );
+                                        }}
+                                        className={`px-2.5 py-0.5 rounded text-[11px] font-mono font-bold border transition-all cursor-pointer block ${
+                                          row.task5.score !== null
+                                            ? "bg-emerald-50 border-emerald-300 text-emerald-800 hover:bg-emerald-100"
+                                            : "bg-amber-50 border-amber-300 text-amber-800 hover:bg-amber-100"
+                                        }`}
+                                      >
+                                        {row.task5.score !== null ? `Score: ${row.task5.score} / ${TASK_POINTS}` : "Assign Score"}
+                                      </button>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <span className="text-slate-300 font-mono text-[11px]">
+                                    — Not submitted
+                                  </span>
+                                )}
+                              </td>
+
                               {/* Total Score */}
                               <td className="py-3.5 px-4 align-top text-center">
                                 <div className="font-mono font-bold text-sm text-slate-900">
@@ -2063,7 +3083,7 @@ export default function AdminPage() {
                                   </span>
                                 </div>
                                 <span className="text-[10px] font-mono text-slate-400">
-                                  {row.submittedCount} / 3 tasks
+                                  {row.submittedCount} / 5 tasks
                                 </span>
                               </td>
 

@@ -9,6 +9,8 @@ import path from "path";
 const POSTER_TASK_ID = 1;
 const MULTI_LINK_TASK_ID = 2;
 const LINK_SUBMISSION_TASK_ID = 3;
+const TRACK_SELECTION_TASK_ID = 4;
+const POSTER_CAPTION_TASK_ID = 5;
 
 export async function POST(
   request: NextRequest,
@@ -51,11 +53,14 @@ export async function POST(
   const isPosterTask = taskId === POSTER_TASK_ID;
   const isMultiLinkTask = taskId === MULTI_LINK_TASK_ID;
   const isLinkSubmissionTask = taskId === LINK_SUBMISSION_TASK_ID;
+  const isTrackSelectionTask = taskId === TRACK_SELECTION_TASK_ID;
+  const isPosterCaptionTask = taskId === POSTER_CAPTION_TASK_ID;
   const answerStr = answer && typeof answer === "string" ? answer.trim() : "";
   let linkStr = link && typeof link === "string" ? link.trim() : "";
 
   let instaUrl = (instagram_url && typeof instagram_url === "string" ? instagram_url.trim() : "");
   let linkedUrl = (linkedin_url && typeof linkedin_url === "string" ? linkedin_url.trim() : "");
+  const trackId = body.track_id && typeof body.track_id === "number" ? body.track_id : null;
 
   if (isPosterTask) {
     if (!linkedUrl && linkStr) {
@@ -82,6 +87,22 @@ export async function POST(
     if (!linkStr && answerStr) {
       linkStr = answerStr;
     }
+  } else if (isTrackSelectionTask) {
+    // Task 4: require track selection, LinkedIn URL is optional (no validation)
+    if (!trackId) {
+      return NextResponse.json({ error: "Track selection is required for Task 4" }, { status: 400 });
+    }
+    // linkedUrl is optional, no format validation
+    linkStr = linkedUrl || "";
+  } else if (isPosterCaptionTask) {
+    // Task 5: require LinkedIn profile URL, Instagram is optional (no format validation)
+    if (!linkedUrl) {
+      return NextResponse.json(
+        { error: "LinkedIn profile URL is required for Task 5" },
+        { status: 400 }
+      );
+    }
+    linkStr = linkedUrl;
   } else {
     if (!answerStr && !linkStr) {
       return NextResponse.json({ error: "An answer or link is required" }, { status: 400 });
@@ -190,6 +211,14 @@ export async function POST(
     finalAnswer = answerStr || `All ${taskLinks.length} links opened and verified.`;
   } else if (isLinkSubmissionTask) {
     finalAnswer = answerStr || `Link submitted: ${linkStr}`;
+  } else if (isTrackSelectionTask) {
+    // For Task 4, answer contains the track name, link contains the LinkedIn URL
+    finalAnswer = answerStr || `Track selected`;
+  } else if (isPosterCaptionTask) {
+    // For Task 5, answer contains the Instagram and LinkedIn URLs
+    finalAnswer = [instaUrl ? `Instagram: ${instaUrl}` : "", linkedUrl ? `LinkedIn: ${linkedUrl}` : ""]
+      .filter(Boolean)
+      .join("\n");
   } else {
     finalAnswer = answerStr;
   }
@@ -202,6 +231,9 @@ export async function POST(
     answer: finalAnswer,
     link: linkStr || null,
   };
+  if (isTrackSelectionTask && trackId) {
+    payload.track_id = trackId;
+  }
   if (trimmedCollege) {
     payload.college_name = trimmedCollege;
   }
@@ -231,6 +263,107 @@ export async function POST(
     if (insertError.code === "23505") {
       // For the poster task, re-submitting = editing the saved link.
       if (isPosterTask) {
+        const updatePayload: Record<string, unknown> = {
+          answer: finalAnswer,
+          link: linkStr || null,
+        };
+        if (trimmedCollege) {
+          updatePayload.college_name = trimmedCollege;
+        }
+        if (trimmedFuturePlan) {
+          updatePayload.future_plan = trimmedFuturePlan;
+        }
+
+        let { error: updateError } = await supabase
+          .from("submissions")
+          .update(updatePayload)
+          .eq("team_id", trimmedTeamId)
+          .eq("member_name_normalized", normalizedName)
+          .eq("task_id", taskId);
+
+        if (updateError && (updateError.code === "PGRST204" || updateError.message?.includes("future_plan")) && trimmedFuturePlan) {
+          delete updatePayload.future_plan;
+          const retry = await supabase
+            .from("submissions")
+            .update(updatePayload)
+            .eq("team_id", trimmedTeamId)
+            .eq("member_name_normalized", normalizedName)
+            .eq("task_id", taskId);
+          updateError = retry.error;
+        }
+
+        // Retry without college_name if the column is missing in the schema cache.
+        if (updateError && updateError.code === "PGRST204" && trimmedCollege) {
+          delete updatePayload.college_name;
+          const retry = await supabase
+            .from("submissions")
+            .update(updatePayload)
+            .eq("team_id", trimmedTeamId)
+            .eq("member_name_normalized", normalizedName)
+            .eq("task_id", taskId);
+          updateError = retry.error;
+        }
+
+        if (updateError) {
+          return NextResponse.json({ error: updateError.message }, { status: 500 });
+        }
+
+        return NextResponse.json({ success: true, updated: true });
+      }
+
+      // For Task 4, allow updating track selection and LinkedIn URL
+      if (isTrackSelectionTask) {
+        const updatePayload: Record<string, unknown> = {
+          answer: finalAnswer,
+          link: linkStr || null,
+          track_id: trackId,
+        };
+        if (trimmedCollege) {
+          updatePayload.college_name = trimmedCollege;
+        }
+        if (trimmedFuturePlan) {
+          updatePayload.future_plan = trimmedFuturePlan;
+        }
+
+        let { error: updateError } = await supabase
+          .from("submissions")
+          .update(updatePayload)
+          .eq("team_id", trimmedTeamId)
+          .eq("member_name_normalized", normalizedName)
+          .eq("task_id", taskId);
+
+        if (updateError && (updateError.code === "PGRST204" || updateError.message?.includes("future_plan")) && trimmedFuturePlan) {
+          delete updatePayload.future_plan;
+          const retry = await supabase
+            .from("submissions")
+            .update(updatePayload)
+            .eq("team_id", trimmedTeamId)
+            .eq("member_name_normalized", normalizedName)
+            .eq("task_id", taskId);
+          updateError = retry.error;
+        }
+
+        // Retry without college_name if the column is missing in the schema cache.
+        if (updateError && updateError.code === "PGRST204" && trimmedCollege) {
+          delete updatePayload.college_name;
+          const retry = await supabase
+            .from("submissions")
+            .update(updatePayload)
+            .eq("team_id", trimmedTeamId)
+            .eq("member_name_normalized", normalizedName)
+            .eq("task_id", taskId);
+          updateError = retry.error;
+        }
+
+        if (updateError) {
+          return NextResponse.json({ error: updateError.message }, { status: 500 });
+        }
+
+        return NextResponse.json({ success: true, updated: true });
+      }
+
+      // For Task 5, allow updating Instagram/LinkedIn profile URLs
+      if (isPosterCaptionTask) {
         const updatePayload: Record<string, unknown> = {
           answer: finalAnswer,
           link: linkStr || null,
