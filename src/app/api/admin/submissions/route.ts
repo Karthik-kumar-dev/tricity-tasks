@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getSupabase } from "@/lib/supabase-server";
+import { getSupabase, fetchAllRows } from "@/lib/supabase-server";
 import { verifyAdmin } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
@@ -12,37 +12,63 @@ export async function GET() {
 
   const supabase = getSupabase();
 
-  let { data: submissions, error } = await supabase
-    .from("submissions")
-    .select("id, team_id, member_name, college_name, future_plan, task_id, answer, link, score, created_at")
-    .order("team_id", { ascending: true })
-    .order("member_name", { ascending: true })
-    .order("task_id", { ascending: true });
-
-  // Fallback if columns do not exist yet in Supabase
-  if (
-    error &&
-    (error.code === "42703" ||
+  let submissions: any[] = [];
+  try {
+    submissions = await fetchAllRows(
+      supabase,
+      "submissions",
+      "id, team_id, member_name, college_name, future_plan, task_id, answer, link, score, created_at",
+      (q) =>
+        q
+          .order("team_id", { ascending: true })
+          .order("member_name", { ascending: true })
+          .order("task_id", { ascending: true })
+    );
+  } catch (error: any) {
+    // Fallback if columns do not exist yet in Supabase
+    if (
+      error.code === "42703" ||
       error.message?.includes("future_plan") ||
-      error.message?.includes("college_name"))
-  ) {
-    const retry = await supabase
-      .from("submissions")
-      .select("id, team_id, member_name, task_id, answer, link, score, created_at")
-      .order("team_id", { ascending: true })
-      .order("member_name", { ascending: true })
-      .order("task_id", { ascending: true });
-
-    submissions = (retry.data || []).map((s) => ({
-      ...s,
-      college_name: null,
-      future_plan: null,
-    }));
-    error = retry.error;
+      error.message?.includes("college_name")
+    ) {
+      try {
+        const retry = await fetchAllRows(
+          supabase,
+          "submissions",
+          "id, team_id, member_name, task_id, answer, link, score, created_at",
+          (q) =>
+            q
+              .order("team_id", { ascending: true })
+              .order("member_name", { ascending: true })
+              .order("task_id", { ascending: true })
+        );
+        submissions = retry.map((s) => ({
+          ...s,
+          college_name: null,
+          future_plan: null,
+        }));
+      } catch (retryErr: any) {
+        return NextResponse.json({ error: retryErr.message }, { status: 500 });
+      }
+    } else {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
   }
 
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  // Also fetch all registrations concurrently so admin page has all registered participants (1200+ users)
+  let registrations: any[] = [];
+  try {
+    registrations = await fetchAllRows(
+      supabase,
+      "registrations",
+      "id, registration_id, team_name, role, member_name",
+      (q) =>
+        q
+          .order("registration_id", { ascending: true })
+          .order("member_name", { ascending: true })
+    );
+  } catch (err: any) {
+    console.warn("Could not fetch registrations in admin submissions:", err?.message);
   }
 
   // Get task titles
@@ -58,5 +84,5 @@ export async function GET() {
     task_title: taskMap.get(s.task_id) || `Task ${s.task_id}`,
   }));
 
-  return NextResponse.json({ submissions: enriched });
+  return NextResponse.json({ submissions: enriched, registrations });
 }

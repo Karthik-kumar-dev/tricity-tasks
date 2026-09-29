@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import * as XLSX from "xlsx";
-import { getSupabase } from "@/lib/supabase-server";
+import { getSupabase, fetchAllRows } from "@/lib/supabase-server";
 import { verifyAdmin } from "@/lib/auth";
 import { MAX_SCORE, TASK_POINTS } from "@/lib/constants";
 import { computeTeamScores, SubmissionRow, RegistrationRow } from "@/lib/scoring";
@@ -147,57 +147,69 @@ export async function GET(request: NextRequest) {
 
   const supabase = getSupabase();
 
-  let query = supabase
-    .from("submissions")
-    .select("team_id, member_name, college_name, future_plan, task_id, answer, link, score, created_at, track_id");
-
-  if (taskId) {
-    const parsed = parseInt(taskId, 10);
-    if (Number.isNaN(parsed)) {
-      return NextResponse.json({ error: "Invalid task_id" }, { status: 400 });
+  let submissions: any[] = [];
+  try {
+    submissions = await fetchAllRows(
+      supabase,
+      "submissions",
+      "team_id, member_name, college_name, future_plan, task_id, answer, link, score, created_at, track_id",
+      (q) => {
+        let applied = q;
+        if (taskId) {
+          const parsed = parseInt(taskId, 10);
+          applied = applied.eq("task_id", parsed);
+        }
+        if (teamId) {
+          applied = applied.eq("team_id", teamId);
+        }
+        return applied
+          .order("team_id", { ascending: true })
+          .order("task_id", { ascending: true });
+      }
+    );
+  } catch (error: any) {
+    // Fallback if college_name or future_plan column does not exist yet in Supabase
+    if (
+      error &&
+      (error.code === "42703" ||
+        error.message?.includes("college_name") ||
+        error.message?.includes("future_plan"))
+    ) {
+      try {
+        const retry = await fetchAllRows(
+          supabase,
+          "submissions",
+          "team_id, member_name, task_id, answer, link, score, created_at, track_id",
+          (q) => {
+            let applied = q;
+            if (taskId) applied = applied.eq("task_id", parseInt(taskId, 10));
+            if (teamId) applied = applied.eq("team_id", teamId);
+            return applied
+              .order("team_id", { ascending: true })
+              .order("task_id", { ascending: true });
+          }
+        );
+        submissions = retry.map((s) => ({
+          ...s,
+          college_name: null,
+          future_plan: null,
+          track_id: null,
+        }));
+      } catch (retryErr: any) {
+        return NextResponse.json({ error: retryErr.message }, { status: 500 });
+      }
+    } else {
+      return NextResponse.json({ error: error.message }, { status: 500 });
     }
-    query = query.eq("task_id", parsed);
-  }
-  if (teamId) {
-    query = query.eq("team_id", teamId);
   }
 
-  let { data: submissions, error } = await query
-    .order("team_id", { ascending: true })
-    .order("task_id", { ascending: true });
-
-  // Fallback if college_name or future_plan column does not exist yet in Supabase
-  if (
-    error &&
-    (error.code === "42703" ||
-      error.message?.includes("college_name") ||
-      error.message?.includes("future_plan"))
-  ) {
-    let fallbackQuery = supabase
-      .from("submissions")
-      .select("team_id, member_name, task_id, answer, link, score, created_at, track_id");
-    if (taskId) fallbackQuery = fallbackQuery.eq("task_id", parseInt(taskId, 10));
-    if (teamId) fallbackQuery = fallbackQuery.eq("team_id", teamId);
-    const retry = await fallbackQuery
-      .order("team_id", { ascending: true })
-      .order("task_id", { ascending: true });
-    submissions = (retry.data || []).map((s) => ({
-      ...s,
-      college_name: null,
-      future_plan: null,
-      track_id: null,
-    }));
-    error = retry.error;
-  }
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-
-  // Task titles for readable export
-  const [{ data: tasks }, { data: registrations }] = await Promise.all([
+  // Task titles and all registrations for readable export
+  const [{ data: tasks }, registrations] = await Promise.all([
     supabase.from("tasks").select("id, title"),
-    supabase.from("registrations").select("registration_id, member_name"),
+    fetchAllRows<RegistrationRow>(supabase, "registrations", "registration_id, member_name").catch((err) => {
+      console.warn("Could not fetch registrations in export:", err?.message);
+      return [];
+    }),
   ]);
   const taskMap = new Map((tasks || []).map((t) => [t.id, t.title]));
 

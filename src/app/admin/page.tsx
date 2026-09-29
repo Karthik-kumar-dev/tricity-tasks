@@ -910,10 +910,21 @@ export default function AdminPage() {
 
   // Combined Matrix & Submissions state
   const [allSubmissions, setAllSubmissions] = useState<Submission[]>([]);
+  const [allRegistrations, setAllRegistrations] = useState<
+    Array<{
+      id?: number;
+      registration_id: string;
+      team_name?: string;
+      role?: string;
+      member_name: string;
+    }>
+  >([]);
   const [loadingAllSubmissions, setLoadingAllSubmissions] = useState(false);
   const [submissionsViewMode, setSubmissionsViewMode] = useState<"matrix" | "leaderboard">("matrix");
   const [matrixTaskFilter, setMatrixTaskFilter] = useState<"all" | "1" | "2" | "3" | "4" | "5">("all");
-  const [matrixScoreFilter, setMatrixScoreFilter] = useState<"all" | "unscored" | "scored">("all");
+  const [matrixScoreFilter, setMatrixScoreFilter] = useState<"all" | "submitted" | "unsubmitted" | "unscored" | "scored">("all");
+  const [matrixPage, setMatrixPage] = useState(1);
+  const [matrixPageSize, setMatrixPageSize] = useState<number>(50);
 
   // Export state
   const [exportOpen, setExportOpen] = useState(false);
@@ -942,6 +953,9 @@ export default function AdminPage() {
       const res = await fetch("/api/admin/submissions");
       const data = await res.json();
       setAllSubmissions(data.submissions || []);
+      if (Array.isArray(data.registrations)) {
+        setAllRegistrations(data.registrations);
+      }
     } catch (err) {
       console.error("Failed to fetch all submissions", err);
     } finally {
@@ -1538,6 +1552,8 @@ export default function AdminPage() {
 
   interface MemberSubmissionsRow {
     teamId: string;
+    teamName?: string;
+    role?: string;
     memberName: string;
     collegeName?: string | null;
     futurePlan?: string | null;
@@ -1555,14 +1571,38 @@ export default function AdminPage() {
     const source = selectedTeam ? submissions : allSubmissions;
     const map = new Map<string, MemberSubmissionsRow>();
 
+    // 1. Pre-populate map from all registrations so all 1200+ tournament participants appear!
+    for (const reg of allRegistrations) {
+      const rawTeamId = (reg.registration_id || "").trim();
+      if (!rawTeamId) continue;
+      if (selectedTeam && rawTeamId.toLowerCase() !== selectedTeam.toLowerCase()) {
+        continue;
+      }
+      const normKey = `${rawTeamId.toUpperCase()}:::${reg.member_name.trim().toLowerCase()}`;
+      map.set(normKey, {
+        teamId: rawTeamId,
+        teamName: reg.team_name,
+        role: reg.role,
+        memberName: reg.member_name.trim(),
+        collegeName: null,
+        futurePlan: null,
+        totalScore: 0,
+        submittedCount: 0,
+      });
+    }
+
+    // 2. Overlay submissions onto members
     for (const sub of source) {
-      const teamId = sub.team_id || selectedTeam || "UNKNOWN";
-      const normKey = `${teamId}:::${sub.member_name.trim().toLowerCase()}`;
+      const teamId = (sub.team_id || selectedTeam || "UNKNOWN").trim();
+      if (selectedTeam && teamId.toLowerCase() !== selectedTeam.toLowerCase()) {
+        continue;
+      }
+      const normKey = `${teamId.toUpperCase()}:::${sub.member_name.trim().toLowerCase()}`;
       let row = map.get(normKey);
       if (!row) {
         row = {
           teamId,
-          memberName: sub.member_name,
+          memberName: sub.member_name.trim(),
           collegeName: sub.college_name,
           futurePlan: sub.future_plan,
           totalScore: 0,
@@ -1591,12 +1631,14 @@ export default function AdminPage() {
 
     let result = Array.from(map.values());
 
-    // Search filter (team ID, member name, college, future plan)
+    // Search filter (team ID, member name, team name, role, college, future plan)
     if (subSearchLower) {
       result = result.filter(
         (r) =>
           r.teamId.toLowerCase().includes(subSearchLower) ||
           r.memberName.toLowerCase().includes(subSearchLower) ||
+          (r.teamName && r.teamName.toLowerCase().includes(subSearchLower)) ||
+          (r.role && r.role.toLowerCase().includes(subSearchLower)) ||
           (r.collegeName && r.collegeName.toLowerCase().includes(subSearchLower)) ||
           (r.futurePlan && r.futurePlan.toLowerCase().includes(subSearchLower))
       );
@@ -1626,21 +1668,29 @@ export default function AdminPage() {
       result = result.filter((r) => Boolean(r.task5));
     }
 
-    // Score filter
+    // Score & Submission filter
     if (matrixScoreFilter === "unscored") {
       result = result.filter(
         (r) =>
           (r.task1 && r.task1.score === null) ||
           (r.task2 && r.task2.score === null) ||
-          (r.task3 && r.task3.score === null)
+          (r.task3 && r.task3.score === null) ||
+          (r.task4 && r.task4.score === null) ||
+          (r.task5 && r.task5.score === null)
       );
     } else if (matrixScoreFilter === "scored") {
       result = result.filter(
         (r) =>
           (r.task1 && r.task1.score !== null) ||
           (r.task2 && r.task2.score !== null) ||
-          (r.task3 && r.task3.score !== null)
+          (r.task3 && r.task3.score !== null) ||
+          (r.task4 && r.task4.score !== null) ||
+          (r.task5 && r.task5.score !== null)
       );
+    } else if (matrixScoreFilter === "submitted") {
+      result = result.filter((r) => r.submittedCount > 0);
+    } else if (matrixScoreFilter === "unsubmitted") {
+      result = result.filter((r) => r.submittedCount === 0);
     }
 
     // Sort by teamId, then memberName
@@ -1651,7 +1701,51 @@ export default function AdminPage() {
     });
 
     return result;
-  }, [selectedTeam, submissions, allSubmissions, subSearchLower, subPlanFilter, matrixTaskFilter, matrixScoreFilter]);
+  }, [
+    selectedTeam,
+    submissions,
+    allSubmissions,
+    allRegistrations,
+    subSearchLower,
+    subPlanFilter,
+    matrixTaskFilter,
+    matrixScoreFilter,
+  ]);
+
+  const matrixStats = useMemo(() => {
+    let submitted = 0;
+    let unsubmitted = 0;
+    let unscored = 0;
+    for (const r of matrixRows) {
+      if (r.submittedCount > 0) submitted++;
+      else unsubmitted++;
+      if (
+        (r.task1 && r.task1.score === null) ||
+        (r.task2 && r.task2.score === null) ||
+        (r.task3 && r.task3.score === null) ||
+        (r.task4 && r.task4.score === null) ||
+        (r.task5 && r.task5.score === null)
+      ) {
+        unscored++;
+      }
+    }
+    return { total: matrixRows.length, submitted, unsubmitted, unscored };
+  }, [matrixRows]);
+
+  const totalMatrixPages = useMemo(() => {
+    if (matrixPageSize === -1) return 1;
+    return Math.max(1, Math.ceil(matrixRows.length / matrixPageSize));
+  }, [matrixRows.length, matrixPageSize]);
+
+  const paginatedMatrixRows = useMemo(() => {
+    if (matrixPageSize === -1) return matrixRows;
+    const start = (matrixPage - 1) * matrixPageSize;
+    return matrixRows.slice(start, start + matrixPageSize);
+  }, [matrixRows, matrixPage, matrixPageSize]);
+
+  useEffect(() => {
+    setMatrixPage(1);
+  }, [subSearch, subPlanFilter, matrixTaskFilter, matrixScoreFilter, selectedTeam, matrixPageSize]);
 
   // ── Checking State ──
   if (checking) {
@@ -2392,15 +2486,17 @@ export default function AdminPage() {
                     </button>
                   </div>
 
-                  {/* Score Filter */}
+                  {/* Score & Submission Filter */}
                   <select
                     value={matrixScoreFilter}
-                    onChange={(e) => setMatrixScoreFilter(e.target.value as "all" | "unscored" | "scored")}
-                    className="input-field text-xs bg-slate-50/60 w-36 cursor-pointer font-mono"
+                    onChange={(e) => setMatrixScoreFilter(e.target.value as any)}
+                    className="input-field text-xs bg-slate-50/60 w-44 cursor-pointer font-mono"
                   >
-                    <option value="all">All Scores</option>
-                    <option value="unscored">⚠️ Needs Scoring</option>
-                    <option value="scored">✓ Scored</option>
+                    <option value="all">All Participants ({matrixStats.total})</option>
+                    <option value="submitted">✓ Has Submissions ({matrixStats.submitted})</option>
+                    <option value="unsubmitted">⭕ Not Submitted ({matrixStats.unsubmitted})</option>
+                    <option value="unscored">⚠️ Needs Scoring ({matrixStats.unscored})</option>
+                    <option value="scored">★ Scored</option>
                   </select>
 
                   {/* Team Filter / Clear Selection */}
@@ -2438,9 +2534,15 @@ export default function AdminPage() {
               <div className="pro-card rounded-2xl bg-white overflow-hidden border border-slate-200 shadow-xs">
                 {/* Header count bar */}
                 <div className="p-4 bg-slate-50/70 border-b border-slate-200 flex items-center justify-between flex-wrap gap-2 text-xs font-mono">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <span className="font-bold text-slate-800">
-                      Showing {matrixRows.length} member submission records
+                      Showing {matrixRows.length} member records
+                    </span>
+                    <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-bold">
+                      {matrixStats.submitted} Submitted
+                    </span>
+                    <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200 text-[10px]">
+                      {matrixStats.unsubmitted} Not Submitted
                     </span>
                     {selectedTeam && (
                       <span className="px-2 py-0.5 rounded bg-teal-100 text-teal-800 text-[11px]">
@@ -2476,8 +2578,9 @@ export default function AdminPage() {
                     No submissions found matching your filters.
                   </div>
                 ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left border-collapse min-w-[900px]">
+                  <>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left border-collapse min-w-[900px]">
 <thead>
                         <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-mono uppercase tracking-wider text-slate-600">
                           <th className="py-3 px-4 w-28">Team ID</th>
@@ -2492,7 +2595,7 @@ export default function AdminPage() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 text-xs">
-                        {matrixRows.map((row) => {
+                        {paginatedMatrixRows.map((row) => {
                           const rowKey = `${row.teamId}:::${row.memberName}`;
 
                           return (
@@ -2514,9 +2617,21 @@ export default function AdminPage() {
 
                               {/* Member Info */}
                               <td className="py-3.5 px-4 align-top">
-                                <div className="font-heading font-bold text-slate-900 text-sm">
-                                  {row.memberName}
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="font-heading font-bold text-slate-900 text-sm">
+                                    {row.memberName}
+                                  </span>
+                                  {row.role && (
+                                    <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 font-semibold border border-slate-200">
+                                      {row.role}
+                                    </span>
+                                  )}
                                 </div>
+                                {row.teamName && (
+                                  <div className="text-[11px] font-mono text-slate-500 mt-0.5 truncate max-w-[180px]" title={`Team: ${row.teamName}`}>
+                                    👥 {row.teamName}
+                                  </div>
+                                )}
                                 {row.collegeName && (
                                   <div className="text-[11px] font-mono text-slate-500 mt-0.5 truncate max-w-[180px]">
                                     🏫 {row.collegeName}
@@ -3110,6 +3225,92 @@ export default function AdminPage() {
                       </tbody>
                     </table>
                   </div>
+
+                    {/* Pagination Controls */}
+                    {matrixRows.length > 0 && (
+                      <div className="p-4 bg-slate-50 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs font-mono">
+                        <div className="flex items-center gap-2 text-slate-500">
+                          <span>
+                            Showing{" "}
+                            <strong className="text-slate-900">
+                              {matrixPageSize === -1
+                                ? 1
+                                : Math.min(matrixRows.length, (matrixPage - 1) * matrixPageSize + 1)}
+                            </strong>{" "}
+                            to{" "}
+                            <strong className="text-slate-900">
+                              {matrixPageSize === -1
+                                ? matrixRows.length
+                                : Math.min(matrixRows.length, matrixPage * matrixPageSize)}
+                            </strong>{" "}
+                            of <strong className="text-slate-900">{matrixRows.length}</strong> participants
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-3">
+                          {/* Page Size Selector */}
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-slate-400">Rows:</span>
+                            <select
+                              value={matrixPageSize}
+                              onChange={(e) => setMatrixPageSize(Number(e.target.value))}
+                              className="px-2 py-1 bg-white border border-slate-200 rounded-lg text-xs font-mono text-slate-700 cursor-pointer"
+                            >
+                              <option value={25}>25</option>
+                              <option value={50}>50</option>
+                              <option value={100}>100</option>
+                              <option value={250}>250</option>
+                              <option value={-1}>All ({matrixRows.length})</option>
+                            </select>
+                          </div>
+
+                          {/* Page Navigation */}
+                          {matrixPageSize !== -1 && totalMatrixPages > 1 && (
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => setMatrixPage(1)}
+                                disabled={matrixPage <= 1}
+                                className="px-2 py-1 rounded bg-white border border-slate-200 text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer font-bold"
+                                title="First page"
+                              >
+                                «
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setMatrixPage((p) => Math.max(1, p - 1))}
+                                disabled={matrixPage <= 1}
+                                className="px-2.5 py-1 rounded bg-white border border-slate-200 text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                              >
+                                Prev
+                              </button>
+                              <span className="px-2 py-1 text-slate-500">
+                                Page <strong className="text-slate-900">{matrixPage}</strong> of{" "}
+                                <strong className="text-slate-900">{totalMatrixPages}</strong>
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => setMatrixPage((p) => Math.min(totalMatrixPages, p + 1))}
+                                disabled={matrixPage >= totalMatrixPages}
+                                className="px-2.5 py-1 rounded bg-white border border-slate-200 text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                              >
+                                Next
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setMatrixPage(totalMatrixPages)}
+                                disabled={matrixPage >= totalMatrixPages}
+                                className="px-2 py-1 rounded bg-white border border-slate-200 text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer font-bold"
+                                title="Last page"
+                              >
+                                »
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             )}
