@@ -4,27 +4,34 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Cropper from "cropperjs";
 import "cropperjs/dist/cropper.css";
 
+/* ─────────────────────────────────────────────────────────────
+   Config — Task 5 poster positions (different layout from Task 1)
+   ───────────────────────────────────────────────────────────── */
 const POSTER = {
   width: 1080,
   height: 1350,
-  templateSrc: "/tricity-poster-template1.png",
-  photo: { x: 554, y: 502, size: 226 },
+  // Task 5 has its own template; fallback for admin-override via posterTemplateUrl
+  templateSrc: "/tricity-task5poster.png",
+  // Profile photo — circular, the golden ring on Task 5 sits lower
+  photo: { x: 555, y: 500, size: 250 },
   photoRingColor: "#ffffff",
   photoRingWidth: 5,
+  // User name — bold, centered, positioned below the photo ring
   name: {
-    x: 554,
-    y: 668,
+    x: 540,
+    y: 655,
     maxWidth: 780,
-    maxFontSize: 52,
+    maxFontSize: 58,
     minFontSize: 20,
     color: "#1a3a5c",
     weight: 800,
   },
+  // College name — semi-bold, centered, below the name
   college: {
-    x: 554,
-    y: 718,
+    x: 540,
+    y: 710,
     maxWidth: 780,
-    maxFontSize: 30,
+    maxFontSize: 32,
     minFontSize: 16,
     color: "#33506f",
     weight: 600,
@@ -37,18 +44,22 @@ const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp"];
 const CROP_SIZE = 540;
 const POSTER_TASK_ID = 5;
 
-let templatePromise: Promise<HTMLImageElement> | null = null;
+/* Cache templates by URL so switching between templates works correctly */
+const templateCache = new Map<string, Promise<HTMLImageElement>>();
 
 function loadTemplate(src: string): Promise<HTMLImageElement> {
-  if (!templatePromise) {
-    templatePromise = new Promise((resolve, reject) => {
-      const img = new Image();
-      img.onload = () => resolve(img);
-      img.onerror = () => reject(new Error("Failed to load the poster template"));
-      img.src = src;
-    });
+  if (!templateCache.has(src)) {
+    templateCache.set(
+      src,
+      new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error("Failed to load the poster template"));
+        img.src = src;
+      })
+    );
   }
-  return templatePromise;
+  return templateCache.get(src)!;
 }
 
 function loadImage(src: string): Promise<HTMLImageElement> {
@@ -203,10 +214,7 @@ export default function Task5PosterFlow({
   const [copied, setCopied] = useState(false);
 
   // Submission state
-  const [savedInstagramLink, setSavedInstagramLink] = useState<string | null>(null);
-  const [savedLinkedInLink, setSavedLinkedInLink] = useState<string | null>(null);
   const [alreadySubmitted, setAlreadySubmitted] = useState(false);
-  const [editingLink, setEditingLink] = useState(false);
   const [instagramUrl, setInstagramUrl] = useState("");
   const [linkedInUrl, setLinkedInUrl] = useState("");
   const [instagramError, setInstagramError] = useState("");
@@ -236,12 +244,6 @@ export default function Task5PosterFlow({
       .then((data) => {
         if (cancelled || !data.submitted) return;
         setAlreadySubmitted(true);
-        const insta = data.instagram_url || (data.link && /instagram/i.test(data.link) ? data.link : null);
-        const linked = data.linkedin_url || (data.link && (!data.instagram_url || /linkedin/i.test(data.link)) ? data.link : null);
-        setSavedInstagramLink(insta);
-        setSavedLinkedInLink(linked);
-        setInstagramUrl(insta || "");
-        setLinkedInUrl(linked || "");
         setSubmitStatus("done");
       })
       .catch(() => {
@@ -511,9 +513,6 @@ export default function Task5PosterFlow({
         return;
       }
       setAlreadySubmitted(true);
-      setSavedInstagramLink(iUrl);
-      setSavedLinkedInLink(lUrl);
-      setEditingLink(false);
       setSubmitStatus("done");
     } catch {
       setSubmitError("Network error. Please try again.");
@@ -832,7 +831,7 @@ export default function Task5PosterFlow({
           <h3 className="font-heading font-bold text-lg text-slate-900">Submit Your Profile Links</h3>
         </div>
 
-        {alreadySubmitted && submitStatus === "done" && !editingLink ? (
+        {alreadySubmitted && submitStatus === "done" ? (
           <div className="p-5 rounded-xl bg-emerald-50 border border-emerald-200">
             <div className="flex items-center gap-2 text-emerald-700 font-heading font-bold mb-2">
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -840,58 +839,9 @@ export default function Task5PosterFlow({
               </svg>
               Task 5 Completed!
             </div>
-            <p className="text-xs text-emerald-800 font-display leading-relaxed mb-4">
+            <p className="text-xs text-emerald-800 font-display leading-relaxed">
               Your profile links have been saved. Admins can now verify and award points.
             </p>
-
-            <div className="space-y-2 mb-4">
-              {savedInstagramLink && (
-                <div className="p-3 rounded-lg bg-white/80 border border-emerald-200/80">
-                  <span className="block text-[10px] font-mono uppercase tracking-wider text-slate-500 font-semibold mb-1">
-                    📸 Instagram Profile URL
-                  </span>
-                  <a
-                    href={
-                      savedInstagramLink.startsWith("http://") || savedInstagramLink.startsWith("https://")
-                        ? savedInstagramLink
-                        : `https://${savedInstagramLink}`
-                    }
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="block text-xs font-mono text-rose-700 hover:underline break-all font-semibold"
-                  >
-                    {savedInstagramLink}
-                  </a>
-                </div>
-              )}
-              {savedLinkedInLink && (
-                <div className="p-3 rounded-lg bg-white/80 border border-emerald-200/80">
-                  <span className="block text-[10px] font-mono uppercase tracking-wider text-slate-500 font-semibold mb-1">
-                    💼 LinkedIn Profile URL
-                  </span>
-                  <a
-                    href={
-                      savedLinkedInLink.startsWith("http://") || savedLinkedInLink.startsWith("https://")
-                        ? savedLinkedInLink
-                        : `https://${savedLinkedInLink}`
-                    }
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="block text-xs font-mono text-blue-700 hover:underline break-all font-semibold"
-                  >
-                    {savedLinkedInLink}
-                  </a>
-                </div>
-              )}
-            </div>
-
-            <button
-              type="button"
-              onClick={() => setEditingLink(true)}
-              className="btn-secondary text-xs py-2 px-5"
-            >
-              Edit Links
-            </button>
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
@@ -960,13 +910,7 @@ export default function Task5PosterFlow({
               disabled={submitting}
               className="w-full sm:w-auto btn-teal text-xs py-3 px-8"
             >
-              {submitting
-                ? alreadySubmitted
-                  ? "Updating Links..."
-                  : "Submitting..."
-                : alreadySubmitted
-                ? "Update Links"
-                : "Submit Task 5 Links"}
+              {submitting ? "Submitting..." : "Submit Task 5 Links"}
             </button>
           </form>
         )}

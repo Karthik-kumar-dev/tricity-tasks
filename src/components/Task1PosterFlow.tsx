@@ -216,10 +216,7 @@ export default function Task1PosterFlow({
   const [copied, setCopied] = useState(false);
 
   // Submission state
-  const [savedInstagramLink, setSavedInstagramLink] = useState<string | null>(null);
-  const [savedLinkedInLink, setSavedLinkedInLink] = useState<string | null>(null);
   const [alreadySubmitted, setAlreadySubmitted] = useState(false);
-  const [editingLink, setEditingLink] = useState(false);
   const [instagramUrl, setInstagramUrl] = useState("");
   const [linkedInUrl, setLinkedInUrl] = useState("");
   const [instagramError, setInstagramError] = useState("");
@@ -247,16 +244,6 @@ export default function Task1PosterFlow({
       .then((data) => {
         if (cancelled || !data.submitted) return;
         setAlreadySubmitted(true);
-        const insta =
-          data.instagram_url ||
-          (data.link && /instagram/i.test(data.link) ? data.link : null);
-        const linked =
-          data.linkedin_url ||
-          (data.link && (!data.instagram_url || /linkedin/i.test(data.link)) ? data.link : null);
-        setSavedInstagramLink(insta);
-        setSavedLinkedInLink(linked);
-        setInstagramUrl(insta || "");
-        setLinkedInUrl(linked || "");
         setSubmitStatus("done");
       })
       .catch(() => {
@@ -526,9 +513,6 @@ export default function Task1PosterFlow({
         return;
       }
       setAlreadySubmitted(true);
-      setSavedInstagramLink(iUrl);
-      setSavedLinkedInLink(lUrl);
-      setEditingLink(false);
       setSubmitStatus("done");
     } catch {
       setSubmitError("Network error. Please try again.");
@@ -850,7 +834,7 @@ export default function Task1PosterFlow({
           <h3 className="font-heading font-bold text-lg text-slate-900">Submit Your Post Links</h3>
         </div>
 
-        {alreadySubmitted && submitStatus === "done" && !editingLink ? (
+        {alreadySubmitted && submitStatus === "done" ? (
           <div className="p-5 rounded-xl bg-emerald-50 border border-emerald-200">
             <div className="flex items-center gap-2 text-emerald-700 font-heading font-bold mb-2">
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -858,58 +842,9 @@ export default function Task1PosterFlow({
               </svg>
               Task 1 Completed!
             </div>
-            <p className="text-xs text-emerald-800 font-display leading-relaxed mb-4">
+            <p className="text-xs text-emerald-800 font-display leading-relaxed">
               Your post links have been saved. Admins can now verify and award points.
             </p>
-
-            <div className="space-y-2 mb-4">
-              {savedLinkedInLink && (
-                <div className="p-3 rounded-lg bg-white/80 border border-emerald-200/80">
-                  <span className="block text-[10px] font-mono uppercase tracking-wider text-slate-500 font-semibold mb-1">
-                    💼 LinkedIn Post URL
-                  </span>
-                  <a
-                    href={
-                      savedLinkedInLink.startsWith("http://") || savedLinkedInLink.startsWith("https://")
-                        ? savedLinkedInLink
-                        : `https://${savedLinkedInLink}`
-                    }
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="block text-xs font-mono text-blue-700 hover:underline break-all font-semibold"
-                  >
-                    {savedLinkedInLink}
-                  </a>
-                </div>
-              )}
-              {savedInstagramLink && (
-                <div className="p-3 rounded-lg bg-white/80 border border-emerald-200/80">
-                  <span className="block text-[10px] font-mono uppercase tracking-wider text-slate-500 font-semibold mb-1">
-                    📸 Instagram Post / Reel URL
-                  </span>
-                  <a
-                    href={
-                      savedInstagramLink.startsWith("http://") || savedInstagramLink.startsWith("https://")
-                        ? savedInstagramLink
-                        : `https://${savedInstagramLink}`
-                    }
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="block text-xs font-mono text-rose-700 hover:underline break-all font-semibold"
-                  >
-                    {savedInstagramLink}
-                  </a>
-                </div>
-              )}
-            </div>
-
-            <button
-              type="button"
-              onClick={() => setEditingLink(true)}
-              className="btn-secondary text-xs py-2 px-5"
-            >
-              Edit Links
-            </button>
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
@@ -978,13 +913,7 @@ export default function Task1PosterFlow({
               disabled={submitting}
               className="w-full sm:w-auto btn-teal text-xs py-3 px-8"
             >
-              {submitting
-                ? alreadySubmitted
-                  ? "Updating Links..."
-                  : "Submitting..."
-                : alreadySubmitted
-                ? "Update Links"
-                : "Submit Task 1 Links"}
+              {submitting ? "Submitting..." : "Submit Task 1 Links"}
             </button>
           </form>
         )}
