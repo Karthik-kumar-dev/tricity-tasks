@@ -7,7 +7,7 @@ import "cropperjs/dist/cropper.css";
 const POSTER = {
   width: 1080,
   height: 1350,
-  templateSrc: "/tricity-poster-template.png",
+  templateSrc: "/tricity-poster-template1.png",
   photo: { x: 540, y: 340, size: 270 },
   photoRingColor: "#ffffff",
   photoRingWidth: 5,
