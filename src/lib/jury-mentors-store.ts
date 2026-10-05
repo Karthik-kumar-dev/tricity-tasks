@@ -20,17 +20,21 @@ const DATA_FILE = path.join(DATA_DIR, "jury_mentors.json");
 
 function ensureDataFile(): JuryMentorEntry[] {
   try {
-    if (!fs.existsSync(DATA_DIR)) {
-      fs.mkdirSync(DATA_DIR, { recursive: true });
+    if (fs.existsSync(DATA_FILE)) {
+      const raw = fs.readFileSync(DATA_FILE, "utf-8");
+      return JSON.parse(raw);
     }
-    if (!fs.existsSync(DATA_FILE)) {
+    // Attempt creation only if writable environment
+    try {
+      if (!fs.existsSync(DATA_DIR)) {
+        fs.mkdirSync(DATA_DIR, { recursive: true });
+      }
       fs.writeFileSync(DATA_FILE, "[]", "utf-8");
-      return [];
+    } catch {
+      // In read-only serverless environment (e.g. Vercel), ignore local file creation
     }
-    const raw = fs.readFileSync(DATA_FILE, "utf-8");
-    return JSON.parse(raw);
-  } catch (err) {
-    console.error("Error reading jury_mentors.json:", err);
+    return [];
+  } catch {
     return [];
   }
 }
@@ -41,8 +45,10 @@ function saveDataFile(entries: JuryMentorEntry[]) {
       fs.mkdirSync(DATA_DIR, { recursive: true });
     }
     fs.writeFileSync(DATA_FILE, JSON.stringify(entries, null, 2), "utf-8");
-  } catch (err) {
-    console.error("Error writing jury_mentors.json:", err);
+  } catch (err: any) {
+    if (err?.code !== "EROFS") {
+      console.warn("Could not write local jury_mentors.json backup:", err?.message || err);
+    }
   }
 }
 

@@ -106,8 +106,8 @@ AS $$
 DECLARE
   inserted_count int := 0;
 BEGIN
-  -- Delete all existing rows
-  DELETE FROM registrations;
+  -- Delete all existing rows (with WHERE clause to satisfy safe-update mode)
+  DELETE FROM registrations WHERE id >= 0;
 
   -- Insert new rows from json array
   INSERT INTO registrations (registration_id, team_name, role, member_name)

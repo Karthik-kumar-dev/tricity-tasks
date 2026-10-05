@@ -4,14 +4,15 @@ import {
   getJuryMentorByIdentifier,
   saveJuryMentorEntry,
 } from "@/lib/jury-mentors-store";
+import { getSupabase } from "@/lib/supabase-server";
 import fs from "fs";
 import path from "path";
 
 export const dynamic = "force-dynamic";
 
 /**
- * Saves a base64 data URI to disk asynchronously and returns the public URL.
- * If dataUri is already a persistent URL, returns it immediately without disk I/O.
+ * Saves a base64 data URI to Supabase Storage (with local disk fallback for dev).
+ * If dataUri is already a persistent URL, returns it immediately without re-uploading.
  */
 async function processImage(dataUri: string, prefix: string): Promise<string> {
   if (!dataUri) return "";
@@ -28,22 +29,61 @@ async function processImage(dataUri: string, prefix: string): Promise<string> {
   const base64Data = dataUri.slice(commaIdx + 1);
 
   let ext = "png";
-  if (header.includes("jpeg") || header.includes("jpg")) ext = "jpg";
-  else if (header.includes("webp")) ext = "webp";
-
-  const uploadsDir = path.join(process.cwd(), "public", "uploads", "jury-mentors");
-  if (!fs.existsSync(uploadsDir)) {
-    await fs.promises.mkdir(uploadsDir, { recursive: true });
+  let contentType = "image/png";
+  if (header.includes("jpeg") || header.includes("jpg")) {
+    ext = "jpg";
+    contentType = "image/jpeg";
+  } else if (header.includes("webp")) {
+    ext = "webp";
+    contentType = "image/webp";
   }
 
   const safePrefix = prefix.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 32);
   const filename = `${safePrefix}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}.${ext}`;
-  const filepath = path.join(uploadsDir, filename);
-
   const buffer = Buffer.from(base64Data, "base64");
-  await fs.promises.writeFile(filepath, buffer);
 
-  return `/uploads/jury-mentors/${filename}`;
+  // 1. Try uploading to Supabase Storage bucket 'task-posters' (works in serverless / production)
+  try {
+    const supabase = getSupabase();
+    const storagePath = `jury-mentors/${filename}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from("task-posters")
+      .upload(storagePath, buffer, {
+        contentType,
+        upsert: true,
+      });
+
+    if (!uploadError) {
+      const { data: publicUrlData } = supabase.storage
+        .from("task-posters")
+        .getPublicUrl(storagePath);
+
+      if (publicUrlData?.publicUrl) {
+        return publicUrlData.publicUrl;
+      }
+    } else {
+      console.warn("Supabase Storage upload error:", uploadError.message);
+    }
+  } catch (supabaseErr) {
+    console.warn("Supabase Storage upload failed, attempting local fallback:", supabaseErr);
+  }
+
+  // 2. Fallback to local filesystem (local dev only)
+  try {
+    const uploadsDir = path.join(process.cwd(), "public", "uploads", "jury-mentors");
+    if (!fs.existsSync(uploadsDir)) {
+      await fs.promises.mkdir(uploadsDir, { recursive: true });
+    }
+    const filepath = path.join(uploadsDir, filename);
+    await fs.promises.writeFile(filepath, buffer);
+    return `/uploads/jury-mentors/${filename}`;
+  } catch (fsErr: any) {
+    console.error("Local filesystem write failed (read-only environment):", fsErr);
+    throw new Error(
+      `Failed to upload image. Please verify Supabase Storage configuration. (${fsErr?.message || "Read-only filesystem"})`
+    );
+  }
 }
 
 export async function GET(request: NextRequest) {
