@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import Link from "next/link";
 import { MAX_SCORE, TASK_POINTS, FUTURE_PLAN_OPTIONS } from "@/lib/constants";
 import JuryMentorsAdminSection from "@/components/JuryMentorsAdminSection";
@@ -852,6 +852,119 @@ function Task5AdminConfig({
   );
 }
 
+function ScoreInputInline({
+  submissionId,
+  currentScore,
+  onSave,
+  onCancel,
+  saving,
+}: {
+  submissionId: number;
+  currentScore: number | null;
+  onSave: (id: number, val: number) => void;
+  onCancel: () => void;
+  saving: boolean;
+}) {
+  const [val, setVal] = useState(currentScore !== null ? String(currentScore) : "");
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    // Automatically focus and select all text so typing immediately replaces whatever number was there
+    if (inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, []);
+
+  function handleCommit() {
+    const num = parseInt(val, 10);
+    if (!isNaN(num)) {
+      const clamped = Math.max(0, Math.min(TASK_POINTS, num));
+      onSave(submissionId, clamped);
+    } else if (val === "") {
+      onCancel();
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-1.5 pt-1 animate-fadeIn">
+      <div className="flex items-center gap-1.5">
+        <div className="relative flex items-center">
+          <input
+            ref={inputRef}
+            type="number"
+            min="0"
+            max={TASK_POINTS}
+            placeholder="0"
+            className="w-16 text-center text-xs py-1 px-1 font-mono font-bold bg-white border-2 border-teal-500 rounded-md text-slate-900 shadow-xs focus:outline-none focus:ring-2 focus:ring-teal-500/30 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+            value={val}
+            onFocus={(e) => e.target.select()}
+            onClick={(e) => (e.target as HTMLInputElement).select()}
+            onChange={(e) => {
+              const raw = e.target.value;
+              if (raw === "") {
+                setVal("");
+                return;
+              }
+              const n = parseInt(raw, 10);
+              if (!isNaN(n)) {
+                setVal(String(Math.min(TASK_POINTS, Math.max(0, n))));
+              }
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleCommit();
+              if (e.key === "Escape") onCancel();
+            }}
+          />
+          <span className="text-[10px] font-mono text-slate-400 pl-1">/{TASK_POINTS}</span>
+        </div>
+
+        <button
+          type="button"
+          onClick={handleCommit}
+          disabled={saving}
+          className="px-2 py-1 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white font-mono text-xs font-bold transition-colors cursor-pointer shadow-xs disabled:opacity-50"
+          title="Save score (Enter)"
+        >
+          {saving ? "…" : "✓"}
+        </button>
+
+        <button
+          type="button"
+          onClick={onCancel}
+          disabled={saving}
+          className="px-1.5 py-1 rounded-md bg-slate-200 hover:bg-slate-300 text-slate-700 font-mono text-xs transition-colors cursor-pointer"
+          title="Cancel (Esc)"
+        >
+          ✕
+        </button>
+      </div>
+
+      {/* Quick Score Preset Pills */}
+      <div className="flex items-center gap-1">
+        {[0, 10, 15, 20].map((preset) => (
+          <button
+            key={preset}
+            type="button"
+            onClick={() => {
+              setVal(String(preset));
+              onSave(submissionId, preset);
+            }}
+            className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-bold border transition-colors cursor-pointer ${
+              val === String(preset)
+                ? "bg-teal-700 text-white border-teal-700"
+                : "bg-slate-100 hover:bg-teal-50 hover:text-teal-700 hover:border-teal-300 border-slate-200 text-slate-600"
+            }`}
+            title={`Quick assign ${preset} points`}
+          >
+            {preset === 20 ? "20★" : preset}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function AdminPage() {
   const [authenticated, setAuthenticated] = useState(false);
   const [checking, setChecking] = useState(true);
@@ -1381,13 +1494,20 @@ export default function AdminPage() {
     }
   }, []);
 
-  async function saveScore(submissionId: number) {
+  async function saveScore(submissionId: number, explicitScore?: number) {
     setSavingScore(true);
     try {
+      const scoreToSend =
+        explicitScore !== undefined ? explicitScore : parseInt(scoreValue, 10);
+      if (isNaN(scoreToSend)) {
+        setSavingScore(false);
+        return;
+      }
+      const clamped = Math.max(0, Math.min(TASK_POINTS, scoreToSend));
       const res = await fetch(`/api/admin/submissions/${submissionId}/score`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ score: parseInt(scoreValue, 10) }),
+        body: JSON.stringify({ score: clamped }),
       });
       const data = await res.json();
       if (data.success) {
@@ -2813,42 +2933,16 @@ export default function AdminPage() {
 
                                     {/* Inline Score */}
                                     {editingScore === row.task1.id ? (
-                                      <div className="flex items-center gap-1 pt-1">
-                                        <input
-                                          type="number"
-                                          min="0"
-                                          max={TASK_POINTS}
-                                          className="input-field w-14 text-center text-xs py-0.5 px-1 font-mono"
-                                          value={scoreValue}
-                                          onChange={(e) => setScoreValue(e.target.value)}
-                                          autoFocus
-                                          onKeyDown={(e) => {
-                                            if (e.key === "Enter") saveScore(row.task1!.id);
-                                            if (e.key === "Escape") setEditingScore(null);
-                                          }}
-                                        />
-                                        <button
-                                          onClick={() => saveScore(row.task1!.id)}
-                                          disabled={savingScore}
-                                          className="px-2 py-0.5 rounded bg-emerald-600 text-white font-mono text-xs font-bold"
-                                        >
-                                          ✓
-                                        </button>
-                                        <button
-                                          onClick={() => setEditingScore(null)}
-                                          className="px-1.5 py-0.5 rounded bg-slate-200 text-slate-700 font-mono text-xs"
-                                        >
-                                          ✕
-                                        </button>
-                                      </div>
+                                      <ScoreInputInline
+                                        submissionId={row.task1.id}
+                                        currentScore={row.task1.score}
+                                        onSave={(id, val) => saveScore(id, val)}
+                                        onCancel={() => setEditingScore(null)}
+                                        saving={savingScore}
+                                      />
                                     ) : (
                                       <button
-                                        onClick={() => {
-                                          setEditingScore(row.task1!.id);
-                                          setScoreValue(
-                                            row.task1!.score !== null ? String(row.task1!.score) : ""
-                                          );
-                                        }}
+                                        onClick={() => setEditingScore(row.task1!.id)}
                                         className={`px-2.5 py-0.5 rounded text-[11px] font-mono font-bold border transition-all cursor-pointer block ${
                                           row.task1.score !== null
                                             ? "bg-emerald-50 border-emerald-300 text-emerald-800 hover:bg-emerald-100"
@@ -2891,42 +2985,16 @@ export default function AdminPage() {
 
                                     {/* Inline Score */}
                                     {editingScore === row.task2.id ? (
-                                      <div className="flex items-center gap-1 pt-1">
-                                        <input
-                                          type="number"
-                                          min="0"
-                                          max={TASK_POINTS}
-                                          className="input-field w-14 text-center text-xs py-0.5 px-1 font-mono"
-                                          value={scoreValue}
-                                          onChange={(e) => setScoreValue(e.target.value)}
-                                          autoFocus
-                                          onKeyDown={(e) => {
-                                            if (e.key === "Enter") saveScore(row.task2!.id);
-                                            if (e.key === "Escape") setEditingScore(null);
-                                          }}
-                                        />
-                                        <button
-                                          onClick={() => saveScore(row.task2!.id)}
-                                          disabled={savingScore}
-                                          className="px-2 py-0.5 rounded bg-emerald-600 text-white font-mono text-xs font-bold"
-                                        >
-                                          ✓
-                                        </button>
-                                        <button
-                                          onClick={() => setEditingScore(null)}
-                                          className="px-1.5 py-0.5 rounded bg-slate-200 text-slate-700 font-mono text-xs"
-                                        >
-                                          ✕
-                                        </button>
-                                      </div>
+                                      <ScoreInputInline
+                                        submissionId={row.task2.id}
+                                        currentScore={row.task2.score}
+                                        onSave={(id, val) => saveScore(id, val)}
+                                        onCancel={() => setEditingScore(null)}
+                                        saving={savingScore}
+                                      />
                                     ) : (
                                       <button
-                                        onClick={() => {
-                                          setEditingScore(row.task2!.id);
-                                          setScoreValue(
-                                            row.task2!.score !== null ? String(row.task2!.score) : ""
-                                          );
-                                        }}
+                                        onClick={() => setEditingScore(row.task2!.id)}
                                         className={`px-2.5 py-0.5 rounded text-[11px] font-mono font-bold border transition-all cursor-pointer block ${
                                           row.task2.score !== null
                                             ? "bg-emerald-50 border-emerald-300 text-emerald-800 hover:bg-emerald-100"
@@ -2991,42 +3059,16 @@ export default function AdminPage() {
 
                                     {/* Inline Score */}
                                     {editingScore === row.task3.id ? (
-                                      <div className="flex items-center gap-1 pt-1">
-                                        <input
-                                          type="number"
-                                          min="0"
-                                          max={TASK_POINTS}
-                                          className="input-field w-14 text-center text-xs py-0.5 px-1 font-mono"
-                                          value={scoreValue}
-                                          onChange={(e) => setScoreValue(e.target.value)}
-                                          autoFocus
-                                          onKeyDown={(e) => {
-                                            if (e.key === "Enter") saveScore(row.task3!.id);
-                                            if (e.key === "Escape") setEditingScore(null);
-                                          }}
-                                        />
-                                        <button
-                                          onClick={() => saveScore(row.task3!.id)}
-                                          disabled={savingScore}
-                                          className="px-2 py-0.5 rounded bg-emerald-600 text-white font-mono text-xs font-bold"
-                                        >
-                                          ✓
-                                        </button>
-                                        <button
-                                          onClick={() => setEditingScore(null)}
-                                          className="px-1.5 py-0.5 rounded bg-slate-200 text-slate-700 font-mono text-xs"
-                                        >
-                                          ✕
-                                        </button>
-                                      </div>
+                                      <ScoreInputInline
+                                        submissionId={row.task3.id}
+                                        currentScore={row.task3.score}
+                                        onSave={(id, val) => saveScore(id, val)}
+                                        onCancel={() => setEditingScore(null)}
+                                        saving={savingScore}
+                                      />
                                     ) : (
                                       <button
-                                        onClick={() => {
-                                          setEditingScore(row.task3!.id);
-                                          setScoreValue(
-                                            row.task3!.score !== null ? String(row.task3!.score) : ""
-                                          );
-                                        }}
+                                        onClick={() => setEditingScore(row.task3!.id)}
                                         className={`px-2.5 py-0.5 rounded text-[11px] font-mono font-bold border transition-all cursor-pointer block ${
                                           row.task3.score !== null
                                             ? "bg-emerald-50 border-emerald-300 text-emerald-800 hover:bg-emerald-100"
@@ -3096,42 +3138,16 @@ export default function AdminPage() {
 
                                     {/* Inline Score */}
                                     {editingScore === row.task4.id ? (
-                                      <div className="flex items-center gap-1 pt-1">
-                                        <input
-                                          type="number"
-                                          min="0"
-                                          max={TASK_POINTS}
-                                          className="input-field w-14 text-center text-xs py-0.5 px-1 font-mono"
-                                          value={scoreValue}
-                                          onChange={(e) => setScoreValue(e.target.value)}
-                                          autoFocus
-                                          onKeyDown={(e) => {
-                                            if (e.key === "Enter") saveScore(row.task4!.id);
-                                            if (e.key === "Escape") setEditingScore(null);
-                                          }}
-                                        />
-                                        <button
-                                          onClick={() => saveScore(row.task4!.id)}
-                                          disabled={savingScore}
-                                          className="px-2 py-0.5 rounded bg-emerald-600 text-white font-mono text-xs font-bold"
-                                        >
-                                          ✓
-                                        </button>
-                                        <button
-                                          onClick={() => setEditingScore(null)}
-                                          className="px-1.5 py-0.5 rounded bg-slate-200 text-slate-700 font-mono text-xs"
-                                        >
-                                          ✕
-                                        </button>
-                                      </div>
+                                      <ScoreInputInline
+                                        submissionId={row.task4.id}
+                                        currentScore={row.task4.score}
+                                        onSave={(id, val) => saveScore(id, val)}
+                                        onCancel={() => setEditingScore(null)}
+                                        saving={savingScore}
+                                      />
                                     ) : (
                                       <button
-                                        onClick={() => {
-                                          setEditingScore(row.task4!.id);
-                                          setScoreValue(
-                                            row.task4!.score !== null ? String(row.task4!.score) : ""
-                                          );
-                                        }}
+                                        onClick={() => setEditingScore(row.task4!.id)}
                                         className={`px-2.5 py-0.5 rounded text-[11px] font-mono font-bold border transition-all cursor-pointer block ${
                                           row.task4.score !== null
                                             ? "bg-emerald-50 border-emerald-300 text-emerald-800 hover:bg-emerald-100"
@@ -3231,42 +3247,16 @@ export default function AdminPage() {
 
                                     {/* Inline Score */}
                                     {editingScore === row.task5.id ? (
-                                      <div className="flex items-center gap-1 pt-1">
-                                        <input
-                                          type="number"
-                                          min="0"
-                                          max={TASK_POINTS}
-                                          className="input-field w-14 text-center text-xs py-0.5 px-1 font-mono"
-                                          value={scoreValue}
-                                          onChange={(e) => setScoreValue(e.target.value)}
-                                          autoFocus
-                                          onKeyDown={(e) => {
-                                            if (e.key === "Enter") saveScore(row.task5!.id);
-                                            if (e.key === "Escape") setEditingScore(null);
-                                          }}
-                                        />
-                                        <button
-                                          onClick={() => saveScore(row.task5!.id)}
-                                          disabled={savingScore}
-                                          className="px-2 py-0.5 rounded bg-emerald-600 text-white font-mono text-xs font-bold"
-                                        >
-                                          ✓
-                                        </button>
-                                        <button
-                                          onClick={() => setEditingScore(null)}
-                                          className="px-1.5 py-0.5 rounded bg-slate-200 text-slate-700 font-mono text-xs"
-                                        >
-                                          ✕
-                                        </button>
-                                      </div>
+                                      <ScoreInputInline
+                                        submissionId={row.task5.id}
+                                        currentScore={row.task5.score}
+                                        onSave={(id, val) => saveScore(id, val)}
+                                        onCancel={() => setEditingScore(null)}
+                                        saving={savingScore}
+                                      />
                                     ) : (
                                       <button
-                                        onClick={() => {
-                                          setEditingScore(row.task5!.id);
-                                          setScoreValue(
-                                            row.task5!.score !== null ? String(row.task5!.score) : ""
-                                          );
-                                        }}
+                                        onClick={() => setEditingScore(row.task5!.id)}
                                         className={`px-2.5 py-0.5 rounded text-[11px] font-mono font-bold border transition-all cursor-pointer block ${
                                           row.task5.score !== null
                                             ? "bg-emerald-50 border-emerald-300 text-emerald-800 hover:bg-emerald-100"
@@ -3598,17 +3588,22 @@ export default function AdminPage() {
                                               ✓ Submitted
                                             </span>
                                             <div className="mt-1">
-                                              <button
-                                                onClick={() => {
-                                                  setEditingScore(row.task1!.id);
-                                                  setScoreValue(
-                                                    row.task1!.score !== null ? String(row.task1!.score) : ""
-                                                  );
-                                                }}
-                                                className="text-[11px] font-mono font-bold text-teal-800 hover:underline"
-                                              >
-                                                {row.task1.score !== null ? `${row.task1.score} / ${TASK_POINTS}` : "Assign Score"}
-                                              </button>
+                                              {editingScore === row.task1.id ? (
+                                                <ScoreInputInline
+                                                  submissionId={row.task1.id}
+                                                  currentScore={row.task1.score}
+                                                  onSave={(id, val) => saveScore(id, val)}
+                                                  onCancel={() => setEditingScore(null)}
+                                                  saving={savingScore}
+                                                />
+                                              ) : (
+                                                <button
+                                                  onClick={() => setEditingScore(row.task1!.id)}
+                                                  className="text-[11px] font-mono font-bold text-teal-800 hover:underline"
+                                                >
+                                                  {row.task1.score !== null ? `${row.task1.score} / ${TASK_POINTS}` : "Assign Score"}
+                                                </button>
+                                              )}
                                             </div>
                                           </div>
                                         ) : (
@@ -3624,17 +3619,22 @@ export default function AdminPage() {
                                               ✓ All Opened
                                             </span>
                                             <div className="mt-1">
-                                              <button
-                                                onClick={() => {
-                                                  setEditingScore(row.task2!.id);
-                                                  setScoreValue(
-                                                    row.task2!.score !== null ? String(row.task2!.score) : ""
-                                                  );
-                                                }}
-                                                className="text-[11px] font-mono font-bold text-teal-800 hover:underline"
-                                              >
-                                                {row.task2.score !== null ? `${row.task2.score} / ${TASK_POINTS}` : "Assign Score"}
-                                              </button>
+                                              {editingScore === row.task2.id ? (
+                                                <ScoreInputInline
+                                                  submissionId={row.task2.id}
+                                                  currentScore={row.task2.score}
+                                                  onSave={(id, val) => saveScore(id, val)}
+                                                  onCancel={() => setEditingScore(null)}
+                                                  saving={savingScore}
+                                                />
+                                              ) : (
+                                                <button
+                                                  onClick={() => setEditingScore(row.task2!.id)}
+                                                  className="text-[11px] font-mono font-bold text-teal-800 hover:underline"
+                                                >
+                                                  {row.task2.score !== null ? `${row.task2.score} / ${TASK_POINTS}` : "Assign Score"}
+                                                </button>
+                                              )}
                                             </div>
                                           </div>
                                         ) : (
@@ -3650,17 +3650,22 @@ export default function AdminPage() {
                                               ✓ Submitted
                                             </span>
                                             <div className="mt-1">
-                                              <button
-                                                onClick={() => {
-                                                  setEditingScore(row.task3!.id);
-                                                  setScoreValue(
-                                                    row.task3!.score !== null ? String(row.task3!.score) : ""
-                                                  );
-                                                }}
-                                                className="text-[11px] font-mono font-bold text-teal-800 hover:underline"
-                                              >
-                                                {row.task3.score !== null ? `${row.task3.score} / ${TASK_POINTS}` : "Assign Score"}
-                                              </button>
+                                              {editingScore === row.task3.id ? (
+                                                <ScoreInputInline
+                                                  submissionId={row.task3.id}
+                                                  currentScore={row.task3.score}
+                                                  onSave={(id, val) => saveScore(id, val)}
+                                                  onCancel={() => setEditingScore(null)}
+                                                  saving={savingScore}
+                                                />
+                                              ) : (
+                                                <button
+                                                  onClick={() => setEditingScore(row.task3!.id)}
+                                                  className="text-[11px] font-mono font-bold text-teal-800 hover:underline"
+                                                >
+                                                  {row.task3.score !== null ? `${row.task3.score} / ${TASK_POINTS}` : "Assign Score"}
+                                                </button>
+                                              )}
                                             </div>
                                           </div>
                                         ) : (

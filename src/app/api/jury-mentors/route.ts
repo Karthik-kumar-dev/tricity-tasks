@@ -1,21 +1,66 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getJuryMentorByIdentifier, saveJuryMentorEntry } from "@/lib/jury-mentors-store";
+import {
+  getJuryMentorById,
+  getJuryMentorByIdentifier,
+  saveJuryMentorEntry,
+} from "@/lib/jury-mentors-store";
 import fs from "fs";
 import path from "path";
 
 export const dynamic = "force-dynamic";
 
-export async function GET(request: NextRequest) {
-  const { searchParams } = new URL(request.url);
-  const identifier = searchParams.get("identifier");
+/**
+ * Saves a base64 data URI to disk asynchronously and returns the public URL.
+ * If dataUri is already a persistent URL, returns it immediately without disk I/O.
+ */
+async function processImage(dataUri: string, prefix: string): Promise<string> {
+  if (!dataUri) return "";
 
-  if (!identifier) {
-    return NextResponse.json({ error: "Missing identifier parameter" }, { status: 400 });
+  // If already a saved URL, reuse it directly (skips re-uploading)
+  if (!dataUri.startsWith("data:image/")) {
+    return dataUri;
   }
 
+  const commaIdx = dataUri.indexOf(",");
+  if (commaIdx === -1) return "";
+
+  const header = dataUri.slice(0, commaIdx);
+  const base64Data = dataUri.slice(commaIdx + 1);
+
+  let ext = "png";
+  if (header.includes("jpeg") || header.includes("jpg")) ext = "jpg";
+  else if (header.includes("webp")) ext = "webp";
+
+  const uploadsDir = path.join(process.cwd(), "public", "uploads", "jury-mentors");
+  if (!fs.existsSync(uploadsDir)) {
+    await fs.promises.mkdir(uploadsDir, { recursive: true });
+  }
+
+  const safePrefix = prefix.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 32);
+  const filename = `${safePrefix}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}.${ext}`;
+  const filepath = path.join(uploadsDir, filename);
+
+  const buffer = Buffer.from(base64Data, "base64");
+  await fs.promises.writeFile(filepath, buffer);
+
+  return `/uploads/jury-mentors/${filename}`;
+}
+
+export async function GET(request: NextRequest) {
+  const { searchParams } = new URL(request.url);
+  const id = searchParams.get("id");
+  const identifier = searchParams.get("identifier");
+
   try {
-    const entry = await getJuryMentorByIdentifier(identifier);
-    return NextResponse.json({ entry });
+    if (id) {
+      const entry = await getJuryMentorById(id);
+      return NextResponse.json({ entry });
+    }
+    if (identifier) {
+      const entry = await getJuryMentorByIdentifier(identifier);
+      return NextResponse.json({ entry });
+    }
+    return NextResponse.json({ error: "Missing id or identifier parameter" }, { status: 400 });
   } catch (err: any) {
     return NextResponse.json({ error: err.message || "Failed to fetch entry" }, { status: 500 });
   }
@@ -24,7 +69,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { role, name, designation, original_photo, poster_image, identifier } = body;
+    const { id, role, name, designation, bio, original_photo, poster_image, identifier } = body;
 
     if (!role || (role !== "jury" && role !== "mentor")) {
       return NextResponse.json({ error: "Please select a valid role (Jury or Mentor)." }, { status: 400 });
@@ -35,61 +80,23 @@ export async function POST(request: NextRequest) {
     if (!designation || !designation.trim()) {
       return NextResponse.json({ error: "Designation / Organisation is required." }, { status: 400 });
     }
-    if (!identifier || !identifier.trim()) {
-      return NextResponse.json({ error: "Identifier is required." }, { status: 400 });
-    }
 
-    // Save base64 images to static files if needed, or keep as optimized data URLs
-    let photoUrl = original_photo || "";
-    let posterUrl = poster_image || "";
+    // Process images in parallel and avoid re-uploading unchanged assets
+    const [photoUrl, posterUrl] = await Promise.all([
+      processImage(original_photo, `${name.trim()}_photo`),
+      processImage(poster_image, `${name.trim()}_poster`),
+    ]);
 
-    // If images are data URLs, optionally write to public/uploads/jury-mentors/
-    const uploadsDir = path.join(process.cwd(), "public", "uploads", "jury-mentors");
-    if (!fs.existsSync(uploadsDir)) {
-      fs.mkdirSync(uploadsDir, { recursive: true });
-    }
-
-    const safeId = identifier.replace(/[^a-zA-Z0-9_-]/g, "_");
-    const timestamp = Date.now();
-
-    if (original_photo && original_photo.startsWith("data:image/")) {
-      try {
-        const matches = original_photo.match(/^data:image\/([a-zA-Z0-9]+);base64,(.+)$/);
-        if (matches) {
-          const ext = matches[1] === "jpeg" ? "jpg" : matches[1];
-          const buffer = Buffer.from(matches[2], "base64");
-          const filename = `${safeId}_photo_${timestamp}.${ext}`;
-          const filepath = path.join(uploadsDir, filename);
-          fs.writeFileSync(filepath, buffer);
-          photoUrl = `/uploads/jury-mentors/${filename}`;
-        }
-      } catch (err) {
-        console.error("Failed to write photo file to disk:", err);
-      }
-    }
-
-    if (poster_image && poster_image.startsWith("data:image/")) {
-      try {
-        const matches = poster_image.match(/^data:image\/([a-zA-Z0-9]+);base64,(.+)$/);
-        if (matches) {
-          const buffer = Buffer.from(matches[2], "base64");
-          const filename = `${safeId}_poster_${timestamp}.png`;
-          const filepath = path.join(uploadsDir, filename);
-          fs.writeFileSync(filepath, buffer);
-          posterUrl = `/uploads/jury-mentors/${filename}`;
-        }
-      } catch (err) {
-        console.error("Failed to write poster file to disk:", err);
-      }
-    }
-
+    // Save with explicit ID target (UPDATE) or as new (INSERT)
     const saved = await saveJuryMentorEntry({
+      id: id ? String(id).trim() : undefined,
       role,
       name: name.trim(),
       designation: designation.trim(),
+      bio: bio ? String(bio).trim() : undefined,
       original_photo_url: photoUrl,
       poster_url: posterUrl,
-      identifier: identifier.trim(),
+      identifier: identifier ? String(identifier).trim() : undefined,
     });
 
     return NextResponse.json({ success: true, entry: saved });

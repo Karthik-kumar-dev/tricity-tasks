@@ -214,6 +214,7 @@ CREATE TABLE IF NOT EXISTS jury_mentors (
   role                TEXT NOT NULL CHECK (role IN ('jury', 'mentor')),
   name                TEXT NOT NULL,
   designation         TEXT NOT NULL,
+  bio                 TEXT,
   original_photo_url  TEXT,
   poster_url          TEXT,
   identifier          TEXT NOT NULL UNIQUE,
@@ -221,6 +222,10 @@ CREATE TABLE IF NOT EXISTS jury_mentors (
   updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Migration for existing jury_mentors table in Supabase SQL Editor:
+-- ALTER TABLE jury_mentors ADD COLUMN IF NOT EXISTS bio TEXT;
+
 CREATE INDEX IF NOT EXISTS idx_jury_mentors_role ON jury_mentors(role);
 CREATE INDEX IF NOT EXISTS idx_jury_mentors_identifier ON jury_mentors(identifier);
+CREATE INDEX IF NOT EXISTS idx_jury_mentors_created_at ON jury_mentors(created_at DESC);
 

@@ -103,6 +103,9 @@ export default function JuryMentorFlow() {
   const [dragging, setDragging] = useState(false);
 
   // Flow & UI states
+  const [existingId, setExistingId] = useState<string | null>(null);
+  const [loadedOriginalName, setLoadedOriginalName] = useState<string>("");
+  const [sessionEntries, setSessionEntries] = useState<any[]>([]);
   const [hasExistingEntry, setHasExistingEntry] = useState(false);
   const [hasSaved, setHasSaved] = useState(false);
   const [confirmSaveOpen, setConfirmSaveOpen] = useState(false);
@@ -125,6 +128,20 @@ export default function JuryMentorFlow() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const redrawTimerRef = useRef<number | null>(null);
 
+  // Reset form to add another member
+  function handleAddNewMember() {
+    setExistingId(null);
+    setLoadedOriginalName("");
+    setName("");
+    setDesignation("");
+    setCroppedPhoto(null);
+    setRawPhoto(null);
+    setHasSaved(false);
+    setHasExistingEntry(false);
+    setFormError("");
+    setSubmitSuccess(false);
+  }
+
   // 1. Check existing submission by identifier
   useEffect(() => {
     const id = getOrCreateDeviceIdentifier();
@@ -132,12 +149,15 @@ export default function JuryMentorFlow() {
       .then((res) => res.json())
       .then((data) => {
         if (data.entry) {
+          setExistingId(String(data.entry.id));
+          setLoadedOriginalName(data.entry.name);
           setHasExistingEntry(true);
           setHasSaved(true);
           setRole(data.entry.role);
           setName(data.entry.name);
           setDesignation(data.entry.designation);
           setCroppedPhoto(data.entry.original_photo_url || null);
+          setSessionEntries([data.entry]);
         }
       })
       .catch((err) => console.error("Error loading existing jury/mentor entry:", err))
@@ -522,7 +542,7 @@ export default function JuryMentorFlow() {
     setConfirmSaveOpen(true);
   }
 
-  async function executeSaveSubmission() {
+  async function executeSaveSubmission(forceSaveAsNew = false) {
     setFormError("");
     const canvas = canvasRef.current;
     if (!canvas) {
@@ -532,13 +552,23 @@ export default function JuryMentorFlow() {
 
     setSaving(true);
     try {
-      const posterDataUrl = canvas.toDataURL("image/png");
+      // Export as high-quality compressed JPEG (0.88 quality, ~250KB) to ensure rapid saving
+      const posterDataUrl = canvas.toDataURL("image/jpeg", 0.88);
       const identifier = getOrCreateDeviceIdentifier();
+
+      // SAFEGUARD:
+      // If user requested to save as new, OR if the entered name differs from the loaded record,
+      // targetId is undefined -> ALWAYS perform an INSERT of a new record!
+      // The previous jury/mentor member is NEVER overwritten!
+      const isNameDifferent =
+        Boolean(loadedOriginalName && name.trim().toLowerCase() !== loadedOriginalName.trim().toLowerCase());
+      const targetId = forceSaveAsNew || isNameDifferent ? undefined : (existingId || undefined);
 
       const res = await fetch("/api/jury-mentors", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          id: targetId,
           role,
           name: name.trim(),
           designation: designation.trim(),
@@ -552,6 +582,22 @@ export default function JuryMentorFlow() {
       if (!res.ok) {
         throw new Error(data.error || "Failed to save submission");
       }
+
+      const savedItem = data.entry;
+      if (savedItem?.id) {
+        setExistingId(String(savedItem.id));
+        setLoadedOriginalName(savedItem.name);
+      }
+
+      setSessionEntries((prev) => {
+        const idx = prev.findIndex((e) => String(e.id) === String(savedItem?.id));
+        if (idx >= 0) {
+          const updated = [...prev];
+          updated[idx] = savedItem;
+          return updated;
+        }
+        return [savedItem, ...prev];
+      });
 
       setHasExistingEntry(true);
       setHasSaved(true);
@@ -1025,9 +1071,7 @@ export default function JuryMentorFlow() {
                 className={`w-full py-3.5 rounded-xl text-xs font-mono font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2 shadow-xs ${
                   saving || !croppedPhoto || !name.trim() || !designation.trim()
                     ? "bg-slate-200 text-slate-400 cursor-not-allowed"
-                    : hasSaved
-                    ? "bg-teal-700 hover:bg-teal-800 text-white cursor-pointer active:scale-98"
-                    : "bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer active:scale-98 animate-pulse"
+                    : "bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer active:scale-98"
                 }`}
               >
                 {saving ? (
@@ -1035,20 +1079,71 @@ export default function JuryMentorFlow() {
                     <div className="w-4 h-4 rounded-full border-2 border-white border-t-transparent animate-spin" />
                     <span>Saving Entry...</span>
                   </>
-                ) : hasSaved ? (
+                ) : existingId && loadedOriginalName && name.trim().toLowerCase() === loadedOriginalName.trim().toLowerCase() ? (
                   <>
-                    <span>✓ Saved to Directory (Click to Re-save)</span>
+                    <span>✓ Update Existing Entry ({loadedOriginalName})</span>
                   </>
                 ) : (
                   <>
-                    <span>Save to Official Directory →</span>
+                    <span>+ Save as NEW Member to Directory →</span>
                   </>
                 )}
               </button>
 
-              {hasExistingEntry && (
-                <div className="text-[11px] font-mono text-emerald-700 text-center">
-                  ✓ You have a registered submission. Edits will update your existing poster.
+              {(hasSaved || existingId) && (
+                <button
+                  type="button"
+                  onClick={handleAddNewMember}
+                  className="w-full py-2.5 px-4 rounded-xl border border-teal-200 bg-teal-50/70 hover:bg-teal-100 text-teal-800 text-xs font-mono font-bold uppercase tracking-wider cursor-pointer flex items-center justify-center gap-2 transition-colors"
+                >
+                  <span>+</span>
+                  <span>Add Another Member (Clear Form)</span>
+                </button>
+              )}
+
+              {/* Session Entries Tray */}
+              {sessionEntries.length > 0 && (
+                <div className="pt-3 border-t border-slate-200 space-y-2">
+                  <div className="text-[11px] font-mono font-bold text-slate-500 uppercase tracking-wider flex items-center justify-between">
+                    <span>Your Saved Members ({sessionEntries.length})</span>
+                    <span className="text-emerald-600">✓ Safe</span>
+                  </div>
+                  <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                    {sessionEntries.map((item, idx) => (
+                      <div
+                        key={item.id || idx}
+                        className="flex items-center justify-between gap-2 p-2 rounded-lg bg-slate-50 border border-slate-200 text-xs"
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          {item.original_photo_url ? (
+                            <img
+                              src={item.original_photo_url}
+                              alt={item.name}
+                              className="w-7 h-7 rounded-full object-cover shrink-0 border border-slate-300"
+                            />
+                          ) : (
+                            <span className="w-7 h-7 rounded-full bg-slate-200 flex items-center justify-center text-[10px] shrink-0">
+                              👤
+                            </span>
+                          )}
+                          <div className="min-w-0 truncate">
+                            <span className="font-bold text-slate-900 block truncate">{item.name}</span>
+                            <span className="text-[10px] font-mono text-slate-500 block truncate">{item.designation}</span>
+                          </div>
+                        </div>
+                        {item.poster_url && (
+                          <a
+                            href={item.poster_url}
+                            download={`tricity_${item.role}_${item.name.replace(/[^a-zA-Z0-9_-]/g, "_")}.png`}
+                            className="btn-secondary text-[10px] py-1 px-2 shrink-0 flex items-center gap-1"
+                            title="Download poster"
+                          >
+                            <span>PNG</span>
+                          </a>
+                        )}
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
@@ -1178,31 +1273,67 @@ export default function JuryMentorFlow() {
               </div>
             )}
 
-            <div className="flex items-center justify-end gap-3 pt-2">
-              <button
-                type="button"
-                onClick={() => setConfirmSaveOpen(false)}
-                disabled={saving}
-                className="btn-secondary text-xs py-2 px-4 cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={executeSaveSubmission}
-                disabled={saving}
-                className="btn-primary text-xs py-2.5 px-5 !bg-emerald-600 hover:!bg-emerald-700 cursor-pointer shadow-sm flex items-center gap-2"
-              >
-                {saving ? (
-                  <>
-                    <div className="w-3.5 h-3.5 rounded-full border-2 border-white border-t-transparent animate-spin" />
-                    <span>Saving...</span>
-                  </>
-                ) : (
-                  <span>✓ Yes, Confirm &amp; Save</span>
-                )}
-              </button>
-            </div>
+            {existingId && loadedOriginalName && name.trim().toLowerCase() === loadedOriginalName.trim().toLowerCase() ? (
+              <div className="flex flex-col sm:flex-row items-center justify-end gap-2.5 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setConfirmSaveOpen(false)}
+                  disabled={saving}
+                  className="btn-secondary text-xs py-2 px-4 cursor-pointer w-full sm:w-auto"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => executeSaveSubmission(true)}
+                  disabled={saving}
+                  className="btn-secondary text-xs py-2.5 px-4 !bg-teal-50 !text-teal-800 border-teal-200 cursor-pointer shadow-2xs flex items-center justify-center gap-1.5 w-full sm:w-auto font-bold"
+                >
+                  <span>+ Save as NEW Member</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => executeSaveSubmission(false)}
+                  disabled={saving}
+                  className="btn-primary text-xs py-2.5 px-4 !bg-emerald-600 hover:!bg-emerald-700 cursor-pointer shadow-sm flex items-center justify-center gap-1.5 w-full sm:w-auto"
+                >
+                  {saving ? (
+                    <>
+                      <div className="w-3.5 h-3.5 rounded-full border-2 border-white border-t-transparent animate-spin" />
+                      <span>Updating...</span>
+                    </>
+                  ) : (
+                    <span>Update ({loadedOriginalName})</span>
+                  )}
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setConfirmSaveOpen(false)}
+                  disabled={saving}
+                  className="btn-secondary text-xs py-2 px-4 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => executeSaveSubmission(true)}
+                  disabled={saving}
+                  className="btn-primary text-xs py-2.5 px-5 !bg-emerald-600 hover:!bg-emerald-700 cursor-pointer shadow-sm flex items-center gap-2"
+                >
+                  {saving ? (
+                    <>
+                      <div className="w-3.5 h-3.5 rounded-full border-2 border-white border-t-transparent animate-spin" />
+                      <span>Saving New Member...</span>
+                    </>
+                  ) : (
+                    <span>✓ Save as NEW Member</span>
+                  )}
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
