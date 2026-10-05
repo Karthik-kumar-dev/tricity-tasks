@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
 import Link from "next/link";
 import { MAX_SCORE, TASK_POINTS, FUTURE_PLAN_OPTIONS } from "@/lib/constants";
+import JuryMentorsAdminSection from "@/components/JuryMentorsAdminSection";
 
 export interface TaskLinkItem {
   id: string;
@@ -864,7 +865,9 @@ export default function AdminPage() {
   const [submissions, setSubmissions] = useState<Submission[]>([]);
   const [loadingTeam, setLoadingTeam] = useState(false);
   const [togglingTask, setTogglingTask] = useState<number | null>(null);
-  const [activeTab, setActiveTab] = useState<"tasks" | "teams" | "registrations">("tasks");
+  const [juryMentorsActive, setJuryMentorsActive] = useState<boolean>(true);
+  const [togglingJuryMentors, setTogglingJuryMentors] = useState<boolean>(false);
+  const [activeTab, setActiveTab] = useState<"tasks" | "teams" | "registrations" | "jury-mentors">("tasks");
 
   // Registrations CSV upload state
   const [regFile, setRegFile] = useState<File | null>(null);
@@ -1186,8 +1189,28 @@ export default function AdminPage() {
       const res = await fetch("/api/tasks");
       const data = await res.json();
       setTasks(data.tasks || []);
+      if (typeof data.jury_mentors_active === "boolean") {
+        setJuryMentorsActive(data.jury_mentors_active);
+      }
     } catch {
       console.error("Failed to fetch tasks");
+    }
+  }
+
+  async function handleToggleJuryMentors() {
+    setTogglingJuryMentors(true);
+    try {
+      const res = await fetch("/api/admin/jury-mentors/toggle", {
+        method: "PATCH",
+      });
+      const data = await res.json();
+      if (data.success && typeof data.is_active === "boolean") {
+        setJuryMentorsActive(data.is_active);
+      }
+    } catch {
+      console.error("Failed to toggle jury & mentors status");
+    } finally {
+      setTogglingJuryMentors(false);
     }
   }
 
@@ -1899,6 +1922,16 @@ export default function AdminPage() {
           >
             Upload Registrations CSV {currentRegStats ? `(${currentRegStats.teamCount} teams)` : ""}
           </button>
+          <button
+            onClick={() => setActiveTab("jury-mentors")}
+            className={`py-3.5 text-xs font-mono font-bold tracking-wider uppercase border-b-2 transition-colors ${
+              activeTab === "jury-mentors"
+                ? "border-amber-600 text-amber-800"
+                : "border-transparent text-slate-500 hover:text-slate-800"
+            }`}
+          >
+            ⚖️💡 Jury &amp; Mentors Spotlight
+          </button>
         </div>
       </div>
 
@@ -2338,6 +2371,68 @@ export default function AdminPage() {
                   </div>
                 );
               })}
+
+              {/* ── Section #6: Jury & Mentors Spotlight ── */}
+              <div
+                className={`pro-card rounded-xl transition-all duration-200 bg-white overflow-hidden border ${
+                  juryMentorsActive
+                    ? "border-amber-300 ring-2 ring-amber-500/10 shadow-2xs"
+                    : "border-slate-200 shadow-2xs opacity-75 bg-slate-50/50"
+                }`}
+              >
+                <div className="p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div className="flex items-start sm:items-center gap-4 min-w-0">
+                    <div
+                      className={`w-10 h-10 rounded-lg flex items-center justify-center font-mono text-xs font-bold shrink-0 ${
+                        juryMentorsActive
+                          ? "bg-amber-100 text-amber-900 border border-amber-300"
+                          : "bg-slate-100 text-slate-500 border border-slate-200"
+                      }`}
+                    >
+                      #6
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h3 className="font-heading font-bold text-base text-slate-900 truncate">
+                          Special Section #6: Jury &amp; Mentors Spotlight
+                        </h3>
+                        <span className="px-2 py-0.5 rounded-md bg-amber-50 border border-amber-200 text-amber-800 text-[10px] font-mono font-semibold">
+                          ⚖️💡 VIP Spotlight Portal
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-500 mt-1 line-clamp-1">
+                        Special VIP poster generation portal for Jury members and Mentors.
+                      </p>
+                      <div className="mt-1 flex items-center gap-2">
+                        {juryMentorsActive ? (
+                          <span className="text-emerald-700 font-semibold text-xs flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse" />
+                            Active — displayed on landing page
+                          </span>
+                        ) : (
+                          <span className="text-slate-400 text-xs">
+                            ○ Locked — hidden/locked on landing page
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Toggle Switch */}
+                  <div className="flex items-center gap-2 pl-2 border-l border-slate-200 shrink-0 self-end sm:self-center">
+                    <span className="text-[11px] font-mono text-slate-500 uppercase">
+                      {juryMentorsActive ? "On" : "Off"}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleToggleJuryMentors}
+                      disabled={togglingJuryMentors}
+                      className={`toggle-switch shrink-0 ${juryMentorsActive ? "active" : ""}`}
+                      aria-label="Toggle Section #6: Jury & Mentors"
+                    />
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -3968,6 +4063,13 @@ export default function AdminPage() {
                 </div>
               )}
             </div>
+          </div>
+        )}
+
+        {/* ── TAB 4: JURY & MENTORS SPOTLIGHT DIRECTORY ── */}
+        {activeTab === "jury-mentors" && (
+          <div className="max-w-6xl mx-auto">
+            <JuryMentorsAdminSection />
           </div>
         )}
       </main>

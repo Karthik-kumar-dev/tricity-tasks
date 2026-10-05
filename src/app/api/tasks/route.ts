@@ -4,6 +4,8 @@ import { resolveTaskRulesAndTemplate } from "@/lib/task-rules";
 
 export const dynamic = "force-dynamic";
 
+import { isJuryMentorsActive } from "@/lib/jury-mentors-config";
+
 export async function GET() {
   const supabase = getSupabase();
 
@@ -54,7 +56,9 @@ export async function GET() {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  const enrichedTasks = (tasks || []).map((t) => {
+  const validTasks = (tasks || []).filter((t) => t.id <= 5);
+
+  const enrichedTasks = validTasks.map((t) => {
     const resolved = resolveTaskRulesAndTemplate(t);
     return {
       ...t,
@@ -65,6 +69,9 @@ export async function GET() {
     };
   });
 
-  return NextResponse.json({ tasks: enrichedTasks });
+  return NextResponse.json({
+    tasks: enrichedTasks,
+    jury_mentors_active: isJuryMentorsActive(),
+  });
 }
 

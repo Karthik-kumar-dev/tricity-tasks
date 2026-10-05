@@ -205,3 +205,22 @@ CREATE TRIGGER update_tracks_updated_at
 -- Migration for existing tasks table to add common_poster_url column (optional, for Task 4)
 -- ALTER TABLE tasks ADD COLUMN IF NOT EXISTS common_poster_url TEXT;
 
+-- ============================================================
+-- Section 6: Jury & Mentors Spotlight Submissions
+-- Run this in your Supabase SQL Editor:
+-- ============================================================
+CREATE TABLE IF NOT EXISTS jury_mentors (
+  id                  SERIAL PRIMARY KEY,
+  role                TEXT NOT NULL CHECK (role IN ('jury', 'mentor')),
+  name                TEXT NOT NULL,
+  designation         TEXT NOT NULL,
+  original_photo_url  TEXT,
+  poster_url          TEXT,
+  identifier          TEXT NOT NULL UNIQUE,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_jury_mentors_role ON jury_mentors(role);
+CREATE INDEX IF NOT EXISTS idx_jury_mentors_identifier ON jury_mentors(identifier);
+

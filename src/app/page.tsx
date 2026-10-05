@@ -541,10 +541,10 @@ export default function HomePage() {
           </div>
 
           {/* Action Buttons */}
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
             <a
               href="#tasks"
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-teal-700 hover:bg-teal-800 text-white font-mono text-xs font-bold tracking-wider uppercase shadow-xs transition-all"
+              className="inline-flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg bg-teal-700 hover:bg-teal-800 text-white font-mono text-xs font-bold tracking-wider uppercase shadow-xs transition-all"
             >
               <span>Start Tasks</span>
               <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -571,7 +571,7 @@ export default function HomePage() {
 
         {/* Mobile dropdown */}
         {mobileMenuOpen && (
-          <div className="lg:hidden bg-white border-b border-slate-200 px-4 pt-2 pb-5 space-y-2 shadow-lg">
+          <div className="lg:hidden bg-white border-b border-slate-200 px-4 pt-2 pb-5 space-y-2.5 shadow-lg">
             <a
               href="#timeline"
               onClick={() => setMobileMenuOpen(false)}
@@ -584,7 +584,7 @@ export default function HomePage() {
               onClick={() => setMobileMenuOpen(false)}
               className="block px-3 py-2 rounded-md font-mono text-xs uppercase font-bold text-teal-700 bg-teal-50"
             >
-              Live Tasks & Challenges
+              Live Tasks &amp; Challenges
             </a>
             <a
               href="#leaderboard"
@@ -748,7 +748,7 @@ export default function HomePage() {
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {tasks.map((task) => (
+              {tasks.filter((t) => t.id <= 5).map((task) => (
                 <div
                   key={task.id}
                   className={`pro-card rounded-2xl p-7 flex flex-col justify-between bg-white relative overflow-hidden transition-all duration-300 ${task.is_active ? "hover:border-teal-600 shadow-xs" : "opacity-75 bg-slate-50"
