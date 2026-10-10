@@ -1,33 +1,31 @@
 {
-  "name": "tricity-tasks",
-  "version": "0.1.0",
+  "name": "hackathon-matchmaking",
+  "version": "1.0.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint",
-    "test:load": "node scripts/load-test.mjs",
-    "test:cleanup": "node scripts/cleanup-loadtest.mjs",
-    "poster:template": "node scripts/generate-poster-template.mjs"
+    "lint": "next lint",
+    "seed": "node scripts/seed-1000.mjs",
+    "test:load-clicks": "node scripts/test-1000-clicks.mjs",
+    "test:load-status": "node scripts/test-1000-status-lookups.mjs",
+    "test:verify": "node scripts/verify-integrity.mjs"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.116.0",
-    "cropperjs": "^1.6.2",
-    "next": "^16.3.8",
-    "react": "19.2.8",
-    "react-dom": "19.2.8",
-    "server-only": "^0.0.1",
-    "xlsx": "^0.18.5"
+    "@supabase/supabase-js": "^2.48.1",
+    "canvas-confetti": "^1.9.4",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.475.0",
+    "next": "^14.2.23",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
-    "eslint": "^9",
-    "eslint-config-next": "^16.3.8",
-    "tailwindcss": "^4",
-    "typescript": "^5"
+    "@types/canvas-confetti": "^1.9.0",
+    "@types/node": "^20.17.16",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "typescript": "^5.7.3"
   }
 }

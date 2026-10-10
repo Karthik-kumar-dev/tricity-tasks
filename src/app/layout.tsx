@@ -1,17 +1,33 @@
-import type { Metadata } from "next";
-import "./globals.css";
+import type { Metadata, Viewport } from 'next';
+import './globals.css';
 
 export const metadata: Metadata = {
-  title: "TRI-CITY AI HACKATHON | Centle India Hyderabad Hackathon & Tasks",
-  description: "TRI-CITY AI HACKATHON is Centle India Hyderabad's student-run hackathon across Warangal, Hanamkonda, and Kazipet. Complete challenges, submit answers, and compete on the live leaderboard.",
-  keywords: ["Hackathon", "Centle India", "Tricity", "Hyderabad", "Warangal", "Hanamkonda", "Kazipet", "AI", "Tasks"],
+  title: 'Hackathon Matchmaker | Team Pairing Arena',
+  description: 'Real-time 1-to-1 hackathon matching platform powered by Next.js and Supabase.',
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 1,
+  themeColor: '#0a0e17',
+};
+
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
-    <html lang="en" className="h-full antialiased scroll-smooth">
-      <body className="min-h-full flex flex-col bg-white text-slate-900 selection:bg-teal-100 selection:text-teal-900">
-        {children}
+    <html lang="en">
+      <head>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+      </head>
+      <body>
+        <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+          {children}
+        </div>
       </body>
     </html>
   );

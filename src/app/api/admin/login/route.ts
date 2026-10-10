@@ -1,22 +1,43 @@
-import { NextRequest, NextResponse } from "next/server";
-import { cookies } from "next/headers";
+import { NextRequest, NextResponse } from 'next/server';
 
 export async function POST(request: NextRequest) {
-  const body = await request.json();
-  const { password } = body;
+  try {
+    const { password } = await request.json();
+    const expectedPassword = process.env.ADMIN_PASSWORD || 'hackathon2025';
 
-  if (!password || password !== process.env.ADMIN_PASSWORD) {
-    return NextResponse.json({ error: "Invalid password" }, { status: 401 });
+    if (!password || password !== expectedPassword) {
+      return NextResponse.json(
+        { success: false, error: 'Invalid admin password' },
+        { status: 401 }
+      );
+    }
+
+    const response = NextResponse.json({
+      success: true,
+      token: expectedPassword,
+      message: 'Admin authenticated successfully',
+    });
+
+    // Set cookie
+    response.cookies.set('admin_token', expectedPassword, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      path: '/',
+      maxAge: 60 * 60 * 24 * 7, // 7 days
+    });
+
+    return response;
+  } catch (error: any) {
+    return NextResponse.json(
+      { success: false, error: error?.message || 'Authentication failed' },
+      { status: 500 }
+    );
   }
+}
 
-  const cookieStore = await cookies();
-  cookieStore.set("admin_token", process.env.ADMIN_PASSWORD!, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "strict",
-    path: "/",
-    maxAge: 60 * 60 * 24,
-  });
-
-  return NextResponse.json({ success: true });
+export async function DELETE() {
+  const response = NextResponse.json({ success: true, message: 'Logged out' });
+  response.cookies.delete('admin_token');
+  return response;
 }

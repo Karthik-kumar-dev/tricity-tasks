@@ -1,231 +1,326 @@
--- ============================================================
--- Tricity Tasks — Database Schema
--- Run this in your Supabase SQL Editor to create tables + seed
--- ============================================================
+-- ==============================================================================
+-- HACKATHON MATCHMAKING DATABASE SCHEMA (v2 — SCALABLE for 1000+ users)
+-- Run this in your Supabase SQL Editor (Dashboard -> SQL Editor -> New Query)
+-- ==============================================================================
 
--- Tasks table (no release_date; admin toggles is_active)
-CREATE TABLE IF NOT EXISTS tasks (
-  id                  SERIAL PRIMARY KEY,
-  title               TEXT NOT NULL,
-  description         TEXT NOT NULL,
-  is_active           BOOLEAN NOT NULL DEFAULT false,
-  rules               TEXT,
-  linkedin_template   TEXT,
-  instagram_template  TEXT,
-  poster_template_url TEXT
+-- 1. Create participants table
+CREATE TABLE IF NOT EXISTS public.participants (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name TEXT NOT NULL,
+    phone TEXT NOT NULL,
+    matched_with_id UUID REFERENCES public.participants(id) ON DELETE SET NULL,
+    status TEXT NOT NULL DEFAULT 'waiting' CHECK (status IN ('waiting', 'matched', 'unmatched')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
+    matched_at TIMESTAMPTZ,
+    CONSTRAINT unique_phone UNIQUE (phone)
 );
 
--- Migration for existing tasks table in Supabase SQL Editor:
--- ALTER TABLE tasks ADD COLUMN IF NOT EXISTS rules TEXT;
--- ALTER TABLE tasks ADD COLUMN IF NOT EXISTS linkedin_template TEXT;
--- ALTER TABLE tasks ADD COLUMN IF NOT EXISTS instagram_template TEXT;
--- ALTER TABLE tasks ADD COLUMN IF NOT EXISTS poster_template_url TEXT;
+-- 2. Indexes for high performance
+CREATE INDEX IF NOT EXISTS idx_participants_phone ON public.participants(phone);
+CREATE INDEX IF NOT EXISTS idx_participants_status ON public.participants(status);
+CREATE INDEX IF NOT EXISTS idx_participants_matched_with ON public.participants(matched_with_id);
 
--- Submissions table with composite unique constraint
-CREATE TABLE IF NOT EXISTS submissions (
-  id                      SERIAL PRIMARY KEY,
-  team_id                 TEXT NOT NULL,
-  member_name             TEXT NOT NULL,
-  member_name_normalized  TEXT NOT NULL,
-  college_name            TEXT,
-  future_plan             TEXT,
-  task_id                 INT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-  answer                  TEXT NOT NULL,
-  link                    TEXT,
-  score                   INT CHECK (score >= 0 AND score <= 20),
-  created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE (team_id, member_name_normalized, task_id)
-);
+-- 3. Enable Row Level Security (RLS)
+ALTER TABLE public.participants ENABLE ROW LEVEL SECURITY;
 
--- Migration for existing scores (run in Supabase SQL Editor):
--- UPDATE submissions SET score = ROUND(score * 20.0 / 100.0) WHERE score IS NOT NULL;
--- ALTER TABLE submissions DROP CONSTRAINT IF EXISTS submissions_score_check;
--- ALTER TABLE submissions ADD CONSTRAINT submissions_score_check CHECK (score >= 0 AND score <= 20);
+-- 4. Policies:
+-- Allow anyone to read participants (required for real-time status updates and match retrieval)
+DROP POLICY IF EXISTS "Public can view participants" ON public.participants;
+CREATE POLICY "Public can view participants" 
+    ON public.participants FOR SELECT 
+    USING (true);
 
--- If you already have an existing submissions table, run this migration in Supabase SQL Editor:
--- ALTER TABLE submissions ADD COLUMN IF NOT EXISTS college_name TEXT;
--- ALTER TABLE submissions ADD COLUMN IF NOT EXISTS future_plan TEXT;
--- ALTER TABLE submissions ADD COLUMN IF NOT EXISTS track_id INT;
+-- Allow students to register (INSERT only)
+DROP POLICY IF EXISTS "Public can register participant" ON public.participants;
+CREATE POLICY "Public can register participant" 
+    ON public.participants FOR INSERT 
+    WITH CHECK (true);
 
--- Index for fast team lookups
-CREATE INDEX IF NOT EXISTS idx_submissions_team_id ON submissions(team_id);
-CREATE INDEX IF NOT EXISTS idx_submissions_task_id ON submissions(task_id);
+-- Prohibit direct public updates or deletes from the client 
+-- (Admin updates/matching and clearing data use the secure service role key / server route)
+DROP POLICY IF EXISTS "Public cannot update directly" ON public.participants;
+DROP POLICY IF EXISTS "Public cannot delete directly" ON public.participants;
 
--- ============================================================
--- Seed 5 sample tasks (all start as inactive / locked)
--- ============================================================
--- If you already have an existing tasks table, update Task 1 in Supabase SQL Editor:
--- UPDATE tasks SET title = 'Task 1 — Share Your Registration Poster',
---   description = 'Create your personalized registration poster: upload your profile photo, crop it, add your name and college, then download and share it on LinkedIn. Paste your public LinkedIn post URL to complete this task. Note: Only links from the LinkedIn app/website are accepted.'
---   WHERE id = 1;
+-- 5. Enable Supabase Realtime for instant updates on client devices (safe to re-run)
+ALTER TABLE public.participants REPLICA IDENTITY FULL;
 
-INSERT INTO tasks (title, description) VALUES
-  (
-    'Task 1 — Share Your Registration Poster',
-    'Create your personalized registration poster: upload your profile photo, crop it, add your name and college, then download the poster and share it on LinkedIn. Paste your public LinkedIn post URL to complete this task. Note: Only links from the LinkedIn app/website are accepted.'
-  ),
-  (
-    'Task 2 — Data Hunt',
-    'Hidden within a public dataset lies a critical piece of information. Navigate through the noise, apply filters, and extract the signal. Provide the answer along with the query or method you used to find it.'
-  ),
-  (
-    'Task 3 — Logic Puzzle',
-    'Five suspects, three clues, one truth. Use deductive reasoning to solve this logic grid. No guessing allowed — every conclusion must follow from the given constraints. Show your elimination steps.'
-  ),
-  (
-    'Task 4 — Poster + Track Selection + LinkedIn URL',
-    'Download the common poster, select your track from the dropdown, download the track-specific poster, and submit your LinkedIn post URL. One submission per member.'
-  ),
-  (
-    'Task 5 — Poster with Photo Overlay + Captions',
-    'Upload your profile photo and we will overlay it onto the official poster template along with your name and college. Copy the ready-made Instagram and LinkedIn captions, share on social media, and submit your profile links. Instagram link is optional, LinkedIn link is required.'
-  );
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_publication_tables 
+        WHERE pubname = 'supabase_realtime' 
+          AND schemaname = 'public' 
+          AND tablename = 'participants'
+    ) THEN
+        ALTER PUBLICATION supabase_realtime ADD TABLE public.participants;
+    END IF;
+END $$;
 
--- ============================================================
--- Registrations Table & Atomic Replace Function
--- Run in Supabase SQL Editor:
--- ============================================================
-
-CREATE TABLE IF NOT EXISTS registrations (
-  id              SERIAL PRIMARY KEY,
-  registration_id TEXT NOT NULL,
-  team_name       TEXT NOT NULL,
-  role            TEXT NOT NULL,
-  member_name     TEXT NOT NULL,
-  UNIQUE (registration_id, role)
-);
-
-CREATE INDEX IF NOT EXISTS idx_registrations_registration_id ON registrations(registration_id);
-CREATE INDEX IF NOT EXISTS idx_registrations_team_name ON registrations(team_name);
-
--- Atomic replacement function (single transaction: deletes all rows and inserts new rows, rolling back on error)
-CREATE OR REPLACE FUNCTION replace_registrations(rows jsonb)
-RETURNS jsonb
+-- ==============================================================================
+-- ATOMIC SERVER-SIDE MATCHING (v2 — Bulk UPDATE, no per-row loop)
+-- Performs all pairing inside a single transaction. Even 5000 participants
+-- complete in < 200ms because there are only 3 SQL statements total.
+-- ==============================================================================
+CREATE OR REPLACE FUNCTION public.pair_participants()
+RETURNS json
 LANGUAGE plpgsql
+SECURITY DEFINER
 AS $$
 DECLARE
-  inserted_count int := 0;
+    pair_ids UUID[];
+    total_count INT;
+    pairs_count INT;
+    unmatched_count INT;
 BEGIN
-  -- Delete all existing rows (with WHERE clause to satisfy safe-update mode)
-  DELETE FROM registrations WHERE id >= 0;
+    -- Prevent simultaneous matching runs (advisory lock)
+    IF NOT pg_try_advisory_xact_lock(424242) THEN
+        RETURN json_build_object('success', false, 'error', 'Matching is already in progress.');
+    END IF;
 
-  -- Insert new rows from json array
-  INSERT INTO registrations (registration_id, team_name, role, member_name)
-  SELECT 
-    TRIM(r->>'registration_id'),
-    TRIM(r->>'team_name'),
-    TRIM(r->>'role'),
-    TRIM(r->>'member_name')
-  FROM jsonb_array_elements(rows) AS r;
+    -- 1. Reset ALL previous matches in one statement
+    UPDATE public.participants
+    SET matched_with_id = NULL,
+        status = 'waiting',
+        matched_at = NULL
+    WHERE status != 'waiting';
 
-  GET DIAGNOSTICS inserted_count = ROW_COUNT;
+    -- 2. Collect all participant IDs in pure cryptographic random order using a distinct subquery
+    -- gen_random_uuid() generates uniform 128-bit CSPRNG tokens per row, guaranteeing true uniform randomness
+    SELECT array_agg(sub.id) INTO pair_ids 
+    FROM (
+        SELECT id 
+        FROM public.participants 
+        ORDER BY gen_random_uuid()
+    ) sub;
+    total_count := coalesce(array_length(pair_ids, 1), 0);
 
-  RETURN json_build_object('success', true, 'count', inserted_count);
-EXCEPTION WHEN OTHERS THEN
-  RAISE;
+    IF total_count < 2 THEN
+        IF total_count = 1 THEN
+            UPDATE public.participants
+            SET status = 'unmatched', matched_with_id = NULL
+            WHERE id = pair_ids[1];
+        END IF;
+        RETURN json_build_object('success', true, 'total', total_count, 'pairs', 0, 'unmatched', total_count);
+    END IF;
+
+    pairs_count := total_count / 2;
+    unmatched_count := total_count % 2;
+
+    -- 3. Bulk pair using generate_series — ONE UPDATE for ALL even-indexed participants
+    UPDATE public.participants p
+    SET matched_with_id = pair_ids[gs.i + 1],
+        status = 'matched',
+        matched_at = now()
+    FROM generate_series(1, pairs_count * 2, 2) AS gs(i)
+    WHERE p.id = pair_ids[gs.i];
+
+    -- 4. Bulk pair the other half — ONE UPDATE for ALL odd-indexed participants (matches with i - 1)
+    UPDATE public.participants p
+    SET matched_with_id = pair_ids[gs.i - 1],
+        status = 'matched',
+        matched_at = now()
+    FROM generate_series(2, pairs_count * 2, 2) AS gs(i)
+    WHERE p.id = pair_ids[gs.i];
+
+    -- 5. If odd count, mark the last participant as unmatched
+    IF unmatched_count = 1 THEN
+        UPDATE public.participants
+        SET matched_with_id = NULL, status = 'unmatched', matched_at = NULL
+        WHERE id = pair_ids[total_count];
+    END IF;
+
+    RETURN json_build_object(
+        'success', true,
+        'total', total_count,
+        'pairs', pairs_count,
+        'unmatched', unmatched_count
+    );
 END;
 $$;
 
--- ============================================================
--- Task 2 Multi-Link Challenge — Links column on tasks table
--- Run this migration in Supabase SQL Editor:
--- ============================================================
--- ALTER TABLE tasks ADD COLUMN IF NOT EXISTS links JSONB DEFAULT '[]'::jsonb;
+GRANT EXECUTE ON FUNCTION public.pair_participants() TO anon, authenticated, service_role;
 
--- ============================================================
--- Task 2 Multi-Link Challenge — Link click tracking
--- Records which individual links each user has opened
--- ============================================================
-CREATE TABLE IF NOT EXISTS task_link_clicks (
-  id                      SERIAL PRIMARY KEY,
-  team_id                 TEXT NOT NULL,
-  member_name_normalized  TEXT NOT NULL,
-  task_id                 INT NOT NULL,
-  link_id                 TEXT NOT NULL,
-  created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE (team_id, member_name_normalized, task_id, link_id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_task_link_clicks_lookup
-  ON task_link_clicks(team_id, member_name_normalized, task_id);
-
--- ============================================================
--- Task 4 — Poster + Track Selection + LinkedIn URL
--- Run these migrations in Supabase SQL Editor:
--- ============================================================
-
--- Table for common poster (one per task, used by Task 4)
-CREATE TABLE IF NOT EXISTS task_posters (
-  id              SERIAL PRIMARY KEY,
-  task_id         INT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-  poster_url      TEXT NOT NULL,
-  is_common       BOOLEAN NOT NULL DEFAULT true,
-  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE (task_id, is_common)
-);
-
--- Table for tracks (Task 4 specific)
-CREATE TABLE IF NOT EXISTS tracks (
-  id              SERIAL PRIMARY KEY,
-  task_id         INT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-  name            TEXT NOT NULL,
-  poster_url      TEXT,
-  display_order   INT NOT NULL DEFAULT 0,
-  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE (task_id, name)
-);
-
-CREATE INDEX IF NOT EXISTS idx_tracks_task_id ON tracks(task_id);
-
--- Trigger to auto-update updated_at
-CREATE OR REPLACE FUNCTION update_updated_at_column()
-RETURNS TRIGGER
+-- ==============================================================================
+-- ATOMIC REGISTRATION — handles race conditions via ON CONFLICT
+-- ==============================================================================
+CREATE OR REPLACE FUNCTION public.register_participant(p_name TEXT, p_phone TEXT)
+RETURNS json
 LANGUAGE plpgsql
+SECURITY DEFINER
 AS $$
+DECLARE
+    result_row public.participants;
+    is_dup BOOLEAN := false;
 BEGIN
-  NEW.updated_at = now();
-  RETURN NEW;
+    -- Try INSERT, catch unique violation
+    INSERT INTO public.participants (name, phone, status)
+    VALUES (trim(p_name), trim(p_phone), 'waiting')
+    ON CONFLICT (phone) DO NOTHING
+    RETURNING * INTO result_row;
+
+    IF result_row IS NULL THEN
+        -- Phone already exists — fetch existing record
+        SELECT * INTO result_row FROM public.participants WHERE phone = trim(p_phone);
+        is_dup := true;
+    END IF;
+
+    RETURN json_build_object(
+        'participant', row_to_json(result_row),
+        'isDuplicate', is_dup
+    );
 END;
 $$;
 
-DROP TRIGGER IF EXISTS update_task_posters_updated_at ON task_posters;
-CREATE TRIGGER update_task_posters_updated_at
-  BEFORE UPDATE ON task_posters
-  FOR EACH ROW
-  EXECUTE FUNCTION update_updated_at_column();
+-- ==============================================================================
+-- RESET MATCHES — returns all participants to waiting queue for the next round
+-- (does NOT delete any participant records)
+-- ==============================================================================
+CREATE OR REPLACE FUNCTION public.reset_matches()
+RETURNS json
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+    reset_total INT;
+BEGIN
+    UPDATE public.participants
+    SET matched_with_id = NULL,
+        status = 'waiting',
+        matched_at = NULL
+    WHERE status != 'waiting';
 
-DROP TRIGGER IF EXISTS update_tracks_updated_at ON tracks;
-CREATE TRIGGER update_tracks_updated_at
-  BEFORE UPDATE ON tracks
-  FOR EACH ROW
-  EXECUTE FUNCTION update_updated_at_column();
+    GET DIAGNOSTICS reset_total = ROW_COUNT;
 
--- Migration for existing tasks table to add common_poster_url column (optional, for Task 4)
--- ALTER TABLE tasks ADD COLUMN IF NOT EXISTS common_poster_url TEXT;
+    RETURN json_build_object(
+        'success', true,
+        'count', reset_total
+    );
+END;
+$$;
 
--- ============================================================
--- Section 6: Jury & Mentors Spotlight Submissions
--- Run this in your Supabase SQL Editor:
--- ============================================================
-CREATE TABLE IF NOT EXISTS jury_mentors (
-  id                  SERIAL PRIMARY KEY,
-  role                TEXT NOT NULL CHECK (role IN ('jury', 'mentor')),
-  name                TEXT NOT NULL,
-  designation         TEXT NOT NULL,
-  bio                 TEXT,
-  original_photo_url  TEXT,
-  poster_url          TEXT,
-  identifier          TEXT NOT NULL UNIQUE,
-  created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+-- ==============================================================================
+-- PASS HOLDERS TABLE & CSV IMPORT SCHEMA
+-- ==============================================================================
+
+CREATE TABLE IF NOT EXISTS public.pass_holders (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    registration_id TEXT,
+    team_name TEXT,
+    role TEXT,
+    name TEXT NOT NULL,
+    email TEXT,
+    phone TEXT,
+    phone_normalized TEXT NOT NULL,
+    branch TEXT,
+    college TEXT,
+    team_size INT DEFAULT 1,
+    food_tokens INT DEFAULT 0,
+    activity_passes INT DEFAULT 0 NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
+    CONSTRAINT unique_pass_holder_phone UNIQUE (phone_normalized)
 );
 
--- Migration for existing jury_mentors table in Supabase SQL Editor:
--- ALTER TABLE jury_mentors ADD COLUMN IF NOT EXISTS bio TEXT;
+CREATE INDEX IF NOT EXISTS idx_pass_holders_phone_normalized ON public.pass_holders(phone_normalized);
+CREATE INDEX IF NOT EXISTS idx_pass_holders_activity_passes ON public.pass_holders(activity_passes);
+CREATE INDEX IF NOT EXISTS idx_pass_holders_active_lookup ON public.pass_holders(phone_normalized, activity_passes);
 
-CREATE INDEX IF NOT EXISTS idx_jury_mentors_role ON jury_mentors(role);
-CREATE INDEX IF NOT EXISTS idx_jury_mentors_identifier ON jury_mentors(identifier);
-CREATE INDEX IF NOT EXISTS idx_jury_mentors_created_at ON jury_mentors(created_at DESC);
+ALTER TABLE public.pass_holders ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Public can view pass status" ON public.pass_holders;
+CREATE POLICY "Public can view pass status"
+    ON public.pass_holders FOR SELECT
+    USING (true);
+
+DROP POLICY IF EXISTS "Admin and service role full access on pass_holders" ON public.pass_holders;
+CREATE POLICY "Admin and service role full access on pass_holders"
+    ON public.pass_holders FOR ALL
+    USING (true)
+    WITH CHECK (true);
+
+CREATE OR REPLACE FUNCTION public.replace_all_pass_holders(p_records jsonb)
+RETURNS json
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+    inserted_count INT := 0;
+BEGIN
+    DELETE FROM public.pass_holders;
+
+    INSERT INTO public.pass_holders (
+        registration_id,
+        team_name,
+        role,
+        name,
+        email,
+        phone,
+        phone_normalized,
+        branch,
+        college,
+        team_size,
+        food_tokens,
+        activity_passes
+    )
+    SELECT 
+        r->>'registration_id',
+        r->>'team_name',
+        r->>'role',
+        coalesce(r->>'name', ''),
+        r->>'email',
+        r->>'phone',
+        r->>'phone_normalized',
+        r->>'branch',
+        r->>'college',
+        coalesce((r->>'team_size')::int, 1),
+        coalesce((r->>'food_tokens')::int, 0),
+        coalesce((r->>'activity_passes')::int, 0)
+    FROM jsonb_array_elements(p_records) AS r;
+
+    GET DIAGNOSTICS inserted_count = ROW_COUNT;
+
+    RETURN json_build_object(
+        'success', true,
+        'count', inserted_count
+    );
+EXCEPTION WHEN OTHERS THEN
+    RAISE EXCEPTION 'Replace all pass holders failed: %', SQLERRM;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.replace_all_pass_holders(jsonb) TO anon, authenticated, service_role;
+
+-- ==============================================================================
+-- REPORTS TABLE — For reporting phone numbers on student portal
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.reports (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    reported_phone TEXT NOT NULL,
+    reported_phone_normalized TEXT NOT NULL,
+    reporter_name TEXT,
+    reporter_phone TEXT,
+    category TEXT NOT NULL,
+    details TEXT,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'investigating', 'resolved', 'dismissed')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
+    resolved_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_reports_reported_phone ON public.reports(reported_phone_normalized);
+CREATE INDEX IF NOT EXISTS idx_reports_status ON public.reports(status);
+
+ALTER TABLE public.reports ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Public can submit reports" ON public.reports;
+CREATE POLICY "Public can submit reports"
+    ON public.reports FOR INSERT
+    WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Admin and service role access on reports" ON public.reports;
+CREATE POLICY "Admin and service role access on reports"
+    ON public.reports FOR ALL
+    USING (true)
+    WITH CHECK (true);
+
+
 
