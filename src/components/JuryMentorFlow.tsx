@@ -25,7 +25,7 @@ const CANVAS_HEIGHT = 1350;
 // Coordinates & layout specification
 const CONFIG = {
   jury: {
-    template: "/posters/jury.png",
+    template: "/posters/jury.png?v=2",
     photo: { cx: 808, cy: 605, diameter: 330 },
     // Name inside yellow band below circle: x 604 to 1036, y 755 to 835 (Center X=820, Y=795)
     nameBox: { x1: 604, x2: 1036, y1: 755, y2: 835, padding: 16 },

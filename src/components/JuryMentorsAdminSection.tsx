@@ -22,7 +22,7 @@ const CANVAS_HEIGHT = 1350;
 
 const CONFIG = {
   jury: {
-    template: "/posters/jury.png",
+    template: "/posters/jury.png?v=2",
     photo: { cx: 808, cy: 605, diameter: 330 },
     nameBox: { x1: 604, x2: 1036, y1: 755, y2: 835, padding: 16 },
     desigBox: { x1: 685, x2: 915, y1: 842, y2: 885, padding: 10 },
